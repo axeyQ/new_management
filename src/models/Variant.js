@@ -3,7 +3,6 @@ import mongoose from 'mongoose';
 const VariantSchema = new mongoose.Schema({
   variantName: { 
     type: String, 
-    required: true, 
     unique: true 
   },
   image: { 

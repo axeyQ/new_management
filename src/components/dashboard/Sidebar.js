@@ -28,6 +28,7 @@ import {
   MenuOpen as MenuOpenIcon,
   TableBar as TableTypeIcon,
   ViewModule as LayoutIcon,
+  Kitchen as KitchenIcon, // Import Kitchen icon
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -206,6 +207,20 @@ const Sidebar = ({ open, toggleDrawer }) => {
               <ReceiptIcon />
             </ListItemIcon>
             <ListItemText primary="Orders" />
+          </ListItemButton>
+        </ListItem>
+
+        {/* Kitchen Display System - Add this new section */}
+        <ListItem disablePadding>
+          <ListItemButton
+            component={Link}
+            href="/dashboard/kitchen"
+            selected={isActive('/dashboard/kitchen')}
+          >
+            <ListItemIcon>
+              <KitchenIcon />
+            </ListItemIcon>
+            <ListItemText primary="Kitchen Display" />
           </ListItemButton>
         </ListItem>
 

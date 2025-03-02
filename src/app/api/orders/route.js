@@ -2,6 +2,10 @@ import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import SalesOrder from '@/models/SalesOrder';
 import { authMiddleware } from '@/lib/auth';
+import Dish from '@/models/Dish';              // Add this import
+import Variant from '@/models/Variant';        // Add this import
+import User from '@/models/User';              // Add this import
+import Table from '@/models/Table';            // Add this import
 
 // Get all orders with optional filters
 export const GET = authMiddleware(async (request) => {

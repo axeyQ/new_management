@@ -1,8 +1,10 @@
+// src/app/api/orders/kot/route.js
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import KOT from '@/models/KOT';
 import SalesOrder from '@/models/SalesOrder';
 import { authMiddleware } from '@/lib/auth';
+import { emitKotUpdate } from '@/lib/websocket';
 
 // Get all KOTs with filters
 export const GET = authMiddleware(async (request) => {
@@ -13,6 +15,7 @@ export const GET = authMiddleware(async (request) => {
     const url = new URL(request.url);
     const orderId = url.searchParams.get('order');
     const status = url.searchParams.get('status');
+    const orderMode = url.searchParams.get('mode');
     const limit = parseInt(url.searchParams.get('limit') || '50');
     const page = parseInt(url.searchParams.get('page') || '1');
     
@@ -24,21 +27,22 @@ export const GET = authMiddleware(async (request) => {
     }
     
     if (status) {
-      query.kotStatus = status;
+      const statuses = status.split(',');
+      query.kotStatus = { $in: statuses };
     }
     
     // Calculate pagination
     const skip = (page - 1) * limit;
     
     // Fetch KOTs with pagination
-    const kots = await KOT.find(query)
+    let kotsQuery = KOT.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .populate('table')
       .populate({
         path: 'items.dish',
-        select: 'dishName'
+        select: 'dishName dieteryTag'
       })
       .populate({
         path: 'items.variant',
@@ -47,17 +51,57 @@ export const GET = authMiddleware(async (request) => {
       .populate('createdBy', 'username')
       .populate('printedBy', 'username');
     
-    // Get total count for pagination
-    const total = await KOT.countDocuments(query);
-    
-    return NextResponse.json({
-      success: true,
-      count: kots.length,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit),
-      data: kots
-    });
+    // If filtering by order mode, we need to handle this separately
+    // since it's in the salesOrder document
+    if (orderMode) {
+      // First, get all KOTs
+      const allKots = await kotsQuery.exec();
+      
+      // Then populate the sales order to check the order mode
+      await SalesOrder.populate(allKots, {
+        path: 'salesOrder',
+        select: 'orderMode'
+      });
+      
+      // Filter KOTs by order mode
+      const filteredKots = allKots.filter(kot => 
+        kot.salesOrder && kot.salesOrder.orderMode === orderMode
+      );
+      
+      // Calculate total for pagination
+      const total = filteredKots.length;
+      
+      // Return the filtered KOTs
+      return NextResponse.json({
+        success: true,
+        count: filteredKots.length,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+        data: filteredKots
+      });
+    } else {
+      // If not filtering by order mode, execute the query normally
+      const kots = await kotsQuery.exec();
+      
+      // Populate sales order for all KOTs to include order mode in response
+      await SalesOrder.populate(kots, {
+        path: 'salesOrder',
+        select: 'orderMode'
+      });
+      
+      // Get total count for pagination
+      const total = await KOT.countDocuments(query);
+      
+      return NextResponse.json({
+        success: true,
+        count: kots.length,
+        total,
+        page,
+        totalPages: Math.ceil(total / limit),
+        data: kots
+      });
+    }
   } catch (error) {
     console.error('Error fetching KOTs:', error);
     return NextResponse.json(
@@ -102,43 +146,6 @@ export const POST = authMiddleware(async (request) => {
       kotData.table = order.table;
     }
     
-    // Generate KOT IDs if not provided
-    if (!kotData.kotTokenNum || !kotData.kotFinalId || !kotData.kotInvoiceId) {
-      const date = new Date();
-      const year = date.getFullYear().toString().substr(-2);
-      const month = (date.getMonth() + 1).toString().padStart(2, '0');
-      const day = date.getDate().toString().padStart(2, '0');
-      
-      // Get count of KOTs today for sequence number
-      const today = new Date(date.setHours(0, 0, 0, 0));
-      const tomorrow = new Date(today);
-      tomorrow.setDate(tomorrow.getDate() + 1);
-      
-      const count = await KOT.countDocuments({
-        createdAt: { $gte: today, $lt: tomorrow }
-      });
-      
-      const sequence = (count + 1).toString().padStart(4, '0');
-      
-      // Format: KOT-YYMMDD-XXXX
-      if (!kotData.kotInvoiceId) {
-        kotData.kotInvoiceId = `KOT-${year}${month}${day}-${sequence}`;
-      }
-      
-      if (!kotData.kotFinalId) {
-        kotData.kotFinalId = `KF-${year}${month}${day}-${sequence}`;
-      }
-      
-      if (!kotData.kotTokenNum) {
-        kotData.kotTokenNum = sequence;
-      }
-    }
-    
-    // Make sure refNum is set
-    if (!kotData.refNum) {
-      kotData.refNum = order.refNum;
-    }
-    
     // Add user info
     kotData.createdBy = request.user._id;
     kotData.updatedBy = request.user._id;
@@ -158,6 +165,9 @@ export const POST = authMiddleware(async (request) => {
         select: 'variantName'
       })
       .populate('createdBy', 'username');
+    
+    // Emit real-time update via WebSocket
+    emitKotUpdate(populatedKOT);
     
     return NextResponse.json({
       success: true,

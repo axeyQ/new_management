@@ -3,95 +3,164 @@ import { useState, useEffect } from 'react';
 import {
   Box,
   Grid,
-  Paper,
   Typography,
   Tabs,
   Tab,
   Chip,
-  Divider,
   AppBar,
   Toolbar,
-  IconButton
+  IconButton,
+  Alert,
+  Snackbar
 } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import SignalWifiOffIcon from '@mui/icons-material/SignalWifiOff';
+import SignalWifiIcon from '@mui/icons-material/SignalWifi4Bar';
 import OrderCard from './OrderCard';
 import axiosWithAuth from '@/lib/axiosWithAuth';
 import toast from 'react-hot-toast';
+import useKdsSocket from '@/hooks/useKdsSocket';
 
-// Order modes from the SalesOrder model
+// Order modes
 const ORDER_MODES = [
   { id: 'all', label: 'All Orders' },
   { id: 'Dine-in', label: 'Dine-in' },
   { id: 'Takeaway', label: 'Takeaway' },
   { id: 'Delivery', label: 'Delivery' },
   { id: 'Direct Order-TableQR', label: 'QR Order' },
-  { id: 'Direct Order-Takeaway', label: 'Direct Takeaway' },
-  { id: 'Direct Order-Delivery', label: 'Direct Delivery' },
   { id: 'Zomato', label: 'Zomato' }
 ];
 
 const KitchenDisplay = () => {
   const [kotOrders, setKotOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedOrderMode, setSelectedOrderMode] = useState('all');
+  const [selectedMode, setSelectedMode] = useState('all');
+  const [notification, setNotification] = useState(null);
+  
+  // Initialize WebSocket connection
+  const { 
+    isConnected, 
+    latestUpdate, 
+    updateKotStatus, 
+    changeOrderMode 
+  } = useKdsSocket(selectedMode);
 
   // Fetch initial KOT orders
   const fetchKotOrders = async () => {
     setLoading(true);
     try {
-      // Explicitly define active statuses
-      const activeStatuses = ['pending', 'preparing'].join(',');
+      const statuses = ['pending', 'preparing']; // Only show active orders
+      const url = selectedMode === 'all' 
+        ? `/api/orders/kot?status=${statuses.join(',')}`
+        : `/api/orders/kot?status=${statuses.join(',')}&mode=${selectedMode}`;
       
-      // Construct the API URL
-      let url = `/api/orders/kot?status=${activeStatuses}`;
-      
-      // Add order mode filter if not 'all'
-      if (selectedOrderMode !== 'all') {
-        url += `&mode=${encodeURIComponent(selectedOrderMode)}`;
-      }
-
-      console.log('Fetching KOT orders from URL:', url); // Debugging log
-
       const res = await axiosWithAuth.get(url);
       
-      console.log('KOT Orders Response:', res.data); // Debugging log
-
       if (res.data.success) {
-        // Ensure we're setting the correct data
-        setKotOrders(res.data.data || []);
+        // Map station to items based on dish name/properties
+        const ordersWithStations = res.data.data.map(order => {
+          // Assign stations to items
+          const items = order.items.map(item => {
+            let station = 'grill'; // Default
+            const itemName = (item.dishName || '').toLowerCase();
+            if (itemName.includes('salad') || itemName.includes('veg')) {
+              station = 'salad';
+            } else if (itemName.includes('dessert') || itemName.includes('sweet')) {
+              station = 'dessert';
+            } else if (itemName.includes('fry') || itemName.includes('fried')) {
+              station = 'fry';
+            } else if (itemName.includes('drink') || itemName.includes('beverage')) {
+              station = 'bar';
+            }
+            return {
+              ...item,
+              station,
+            };
+          });
+          
+          // Calculate primary station for the order
+          const stationCounts = items.reduce((acc, item) => {
+            acc[item.station] = (acc[item.station] || 0) + 1;
+            return acc;
+          }, {});
+          
+          // Determine primary station by highest count
+          const entries = Object.entries(stationCounts);
+          const primaryStation = entries.length > 0 
+            ? entries.sort((a, b) => b[1] - a[1])[0][0]
+            : 'grill';
+          
+          return {
+            ...order,
+            items,
+            primaryStation,
+            stationCounts
+          };
+        });
         
-        if (res.data.data.length === 0) {
-          console.log('No orders found for the selected mode');
-        }
+        setKotOrders(ordersWithStations);
       } else {
-        console.error('Failed to fetch orders:', res.data.message);
         toast.error(res.data.message || 'Failed to fetch orders');
-        setKotOrders([]); // Ensure empty array if fetch fails
       }
     } catch (error) {
       console.error('Error fetching KOT orders:', error);
       toast.error('Error loading orders');
-      setKotOrders([]); // Ensure empty array on error
     } finally {
       setLoading(false);
     }
   };
 
-  // Initial fetch and periodic refresh
+  // Initial fetch on mount
   useEffect(() => {
-    // Fetch orders immediately
     fetchKotOrders();
+  }, [selectedMode]);
+  
+  // Process WebSocket updates
+  useEffect(() => {
+    if (!latestUpdate) return;
+    
+    // Handle different update types
+    if (latestUpdate.type === 'new') {
+      // New KOT added
+      setNotification({
+        type: 'info',
+        message: `New order #${latestUpdate.data.kotTokenNum} received`,
+        open: true
+      });
+      // Refresh orders to include the new one
+      fetchKotOrders();
+      
+    } else if (latestUpdate.type === 'status') {
+      // KOT status update
+      const { kotId, status } = latestUpdate.data;
+      
+      // Update the existing order in our state
+      setKotOrders(prev => 
+        prev.map(order => 
+          order._id === kotId 
+            ? { ...order, kotStatus: status }
+            : order
+        ).filter(order => 
+          // Remove completed orders from view
+          order._id !== kotId || (order._id === kotId && status !== 'completed')
+        )
+      );
+      
+      // Show notification
+      setNotification({
+        type: 'success',
+        message: `Order status updated to ${status}`,
+        open: true
+      });
+    }
+  }, [latestUpdate]);
 
-    // Set up periodic refresh every 30 seconds
-    const intervalId = setInterval(fetchKotOrders, 30000);
-
-    // Cleanup interval on component unmount
-    return () => clearInterval(intervalId);
-  }, [selectedOrderMode]); // Re-fetch when order mode changes
-
-  // Handle order mode change
-  const handleOrderModeChange = (event, newValue) => {
-    setSelectedOrderMode(newValue);
+  // Handle mode change
+  const handleModeChange = (event, newValue) => {
+    setSelectedMode(newValue);
+    
+    // Update WebSocket room
+    changeOrderMode(newValue);
   };
 
   // Handle order status update
@@ -108,9 +177,16 @@ const KitchenDisplay = () => {
             order._id === orderId
               ? { ...order, kotStatus: newStatus }
               : order
+          ).filter(order => 
+            // If new status is "completed", remove from view
+            order._id !== orderId || (order._id === orderId && newStatus !== 'completed')
           )
         );
+        
         toast.success(`Order status updated to ${newStatus}`);
+        
+        // Also update via WebSocket to notify other clients
+        updateKotStatus(orderId, newStatus);
       } else {
         toast.error(res.data.message || 'Failed to update order status');
       }
@@ -118,6 +194,14 @@ const KitchenDisplay = () => {
       console.error('Error updating order status:', error);
       toast.error('Error updating order status');
     }
+  };
+  
+  // Close notification
+  const handleCloseNotification = () => {
+    setNotification(prev => ({
+      ...prev,
+      open: false
+    }));
   };
 
   return (
@@ -128,6 +212,16 @@ const KitchenDisplay = () => {
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
             Kitchen Display System
           </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', mr: 2 }}>
+            {isConnected ? (
+              <SignalWifiIcon color="success" sx={{ mr: 1 }} />
+            ) : (
+              <SignalWifiOffIcon color="error" sx={{ mr: 1 }} />
+            )}
+            <Typography variant="body2" color={isConnected ? "success.main" : "error.main"}>
+              {isConnected ? 'Connected' : 'Disconnected'}
+            </Typography>
+          </Box>
           <IconButton
             color="primary"
             onClick={fetchKotOrders}
@@ -138,8 +232,8 @@ const KitchenDisplay = () => {
         </Toolbar>
         {/* Order Mode Tabs */}
         <Tabs
-          value={selectedOrderMode}
-          onChange={handleOrderModeChange}
+          value={selectedMode}
+          onChange={handleModeChange}
           variant="scrollable"
           scrollButtons="auto"
           aria-label="order modes"
@@ -151,10 +245,9 @@ const KitchenDisplay = () => {
               label={mode.label}
               icon={
                 <Chip
-                  label={mode.id === 'all'
-                    ? kotOrders.length
-                    : kotOrders.filter(order => order.orderMode === mode.id).length
-                  }
+                  label={kotOrders.filter(order =>
+                    mode.id === 'all' || order.orderMode === mode.id
+                  ).length}
                   size="small"
                   color="primary"
                 />
@@ -170,14 +263,13 @@ const KitchenDisplay = () => {
         {loading ? (
           <Typography align="center">Loading orders...</Typography>
         ) : kotOrders.length === 0 ? (
-          <Typography align="center">No active orders</Typography>
+          <Typography align="center">No active orders for this mode</Typography>
         ) : (
           <Grid container spacing={2}>
             {kotOrders.map(order => (
               <Grid item xs={12} sm={6} md={4} lg={3} key={order._id}>
                 <OrderCard
                   order={order}
-                  selectedOrderMode={selectedOrderMode}
                   onStatusUpdate={handleOrderStatusUpdate}
                 />
               </Grid>
@@ -185,6 +277,23 @@ const KitchenDisplay = () => {
           </Grid>
         )}
       </Box>
+      
+      {/* Notification */}
+      <Snackbar
+        open={notification?.open}
+        autoHideDuration={4000}
+        onClose={handleCloseNotification}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+      >
+        <Alert
+          onClose={handleCloseNotification}
+          severity={notification?.type || 'info'}
+          variant="filled"
+          sx={{ width: '100%' }}
+        >
+          {notification?.message}
+        </Alert>
+      </Snackbar>
     </Box>
   );
 };

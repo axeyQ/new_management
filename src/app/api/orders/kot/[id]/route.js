@@ -1,9 +1,12 @@
+// src/app/api/orders/kot/[id]/route.js
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import KOT from '@/models/KOT';
+import SalesOrder from '@/models/SalesOrder';
 import { authMiddleware } from '@/lib/auth';
+import { emitKotStatusChange } from '@/lib/websocket';
 
-// Get KOT by ID
+// Get a specific KOT
 export const GET = authMiddleware(async (request, { params }) => {
   try {
     await connectDB();
@@ -11,9 +14,10 @@ export const GET = authMiddleware(async (request, { params }) => {
     
     const kot = await KOT.findById(id)
       .populate('table')
+      .populate('salesOrder')
       .populate({
         path: 'items.dish',
-        select: 'dishName'
+        select: 'dishName image'
       })
       .populate({
         path: 'items.variant',
@@ -25,7 +29,7 @@ export const GET = authMiddleware(async (request, { params }) => {
       })
       .populate('createdBy', 'username')
       .populate('printedBy', 'username');
-    
+      
     if (!kot) {
       return NextResponse.json(
         { success: false, message: 'KOT not found' },
@@ -46,14 +50,14 @@ export const GET = authMiddleware(async (request, { params }) => {
   }
 });
 
-// Update KOT
+// Update a KOT
 export const PUT = authMiddleware(async (request, { params }) => {
   try {
     await connectDB();
     const { id } = params;
     const updateData = await request.json();
     
-    // Find the KOT
+    // Find KOT
     const kot = await KOT.findById(id);
     if (!kot) {
       return NextResponse.json(
@@ -65,11 +69,31 @@ export const PUT = authMiddleware(async (request, { params }) => {
     // Update KOT status
     if (updateData.kotStatus) {
       kot.kotStatus = updateData.kotStatus;
+      
+      // Update timing information
+      if (updateData.kotStatus === 'preparing' && !kot.preparationStartTime) {
+        kot.preparationStartTime = new Date();
+      } else if ((updateData.kotStatus === 'ready' || updateData.kotStatus === 'completed') && !kot.completionTime) {
+        kot.completionTime = new Date();
+      }
+      
+      // If KOT is completed, update the order status as well
+      if (updateData.kotStatus === 'ready' || updateData.kotStatus === 'completed') {
+        // Check if all KOTs for this order are completed
+        if (kot.salesOrder) {
+          await SalesOrder.findByIdAndUpdate(
+            kot.salesOrder,
+            { orderStatus: updateData.kotStatus === 'ready' ? 'ready' : 'served' },
+            { new: true }
+          );
+        }
+      }
     }
     
     // Update printed status
     if (updateData.printed !== undefined) {
       kot.printed = updateData.printed;
+      
       if (updateData.printed) {
         kot.printedBy = request.user._id;
         kot.printedAt = Date.now();
@@ -84,10 +108,28 @@ export const PUT = authMiddleware(async (request, { params }) => {
     // Save the updated KOT
     await kot.save();
     
+    // Emit status update via WebSocket
+    emitKotStatusChange(id, kot.kotStatus);
+    
+    // Return updated KOT
+    const updatedKot = await KOT.findById(id)
+      .populate('table')
+      .populate('salesOrder')
+      .populate({
+        path: 'items.dish',
+        select: 'dishName'
+      })
+      .populate({
+        path: 'items.variant',
+        select: 'variantName'
+      })
+      .populate('createdBy', 'username')
+      .populate('printedBy', 'username');
+      
     return NextResponse.json({
       success: true,
       message: 'KOT updated successfully',
-      data: kot
+      data: updatedKot
     });
   } catch (error) {
     console.error('Error updating KOT:', error);
@@ -98,7 +140,7 @@ export const PUT = authMiddleware(async (request, { params }) => {
   }
 });
 
-// Cancel KOT
+// Cancel a KOT
 export const DELETE = authMiddleware(async (request, { params }) => {
   try {
     await connectDB();
@@ -113,12 +155,24 @@ export const DELETE = authMiddleware(async (request, { params }) => {
       );
     }
     
-    // Mark as cancelled
+    // Only allow cancellation of pending or preparing KOTs
+    if (kot.kotStatus !== 'pending' && kot.kotStatus !== 'preparing') {
+      return NextResponse.json(
+        { success: false, message: 'Cannot cancel KOT that is already completed or served' },
+        { status: 400 }
+      );
+    }
+    
+    // Update KOT status to cancelled
     kot.kotStatus = 'cancelled';
     kot.updatedBy = request.user._id;
     kot.updatedAt = Date.now();
     
+    // Save the updated KOT
     await kot.save();
+    
+    // Emit status update via WebSocket
+    emitKotStatusChange(id, 'cancelled');
     
     return NextResponse.json({
       success: true,

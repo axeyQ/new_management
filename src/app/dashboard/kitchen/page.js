@@ -1,8 +1,7 @@
 'use client';
 import { useState } from 'react';
-import { Box, Container, Paper, Tab, Tabs } from '@mui/material';
-import { 
-  Dashboard as DashboardIcon,
+import { Box, Paper, Tab, Tabs } from '@mui/material';
+import {
   Restaurant as RestaurantIcon,
   InsertChart as ChartIcon
 } from '@mui/icons-material';
@@ -30,7 +29,7 @@ export default function KitchenDisplayPage() {
   if (loading) {
     return <div>Loading...</div>;
   }
-
+  
   if (!isAuthenticated) {
     return null;
   }
@@ -50,7 +49,6 @@ export default function KitchenDisplayPage() {
           <Tab icon={<ChartIcon />} label="METRICS & PERFORMANCE" />
         </Tabs>
       </Paper>
-
       <Box sx={{ flexGrow: 1, overflow: 'auto' }}>
         {tabValue === 0 && <KitchenDisplay />}
         {tabValue === 1 && <KitchenMetrics />}

@@ -52,7 +52,7 @@ const getElapsedTime = (date) => {
   }
 };
 
-const OrderCard = ({ order, selectedOrderMode, onStatusUpdate }) => {
+const OrderCard = ({ order, onStatusUpdate }) => {
   const [expanded, setExpanded] = useState(false);
 
   // Get next status based on current status
@@ -68,6 +68,7 @@ const OrderCard = ({ order, selectedOrderMode, onStatusUpdate }) => {
         return null;
     }
   };
+
   const nextStatus = getNextStatus();
 
   // Handle bumping the order to next status
@@ -136,6 +137,12 @@ const OrderCard = ({ order, selectedOrderMode, onStatusUpdate }) => {
                     <Typography variant="body1">
                       {item.quantity}× {item.dishName}
                     </Typography>
+                    <Chip
+                      label={item.station}
+                      variant="outlined"
+                      size="small"
+                      color="primary"
+                    />
                   </Box>
                 }
                 secondary={
@@ -176,14 +183,11 @@ const OrderCard = ({ order, selectedOrderMode, onStatusUpdate }) => {
         >
           {expanded ? 'Less' : 'More'}
         </Button>
-
         {nextStatus && (
           <Button
             variant="contained"
             color={getStatusColor(order.kotStatus)}
-            startIcon={
-              order.kotStatus === 'preparing' ? <DoneIcon /> : <AssignmentIcon />
-            }
+            startIcon={order.kotStatus === 'preparing' ? <DoneIcon /> : <AssignmentIcon />}
             onClick={handleBumpOrder}
           >
             {order.kotStatus === 'pending' ? 'Start Cooking' :
