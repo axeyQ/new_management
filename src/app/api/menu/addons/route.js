@@ -1,8 +1,10 @@
+// src/app/api/menu/addons/route.js
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import AddOn from '@/models/AddOn';
 import AddOnGroup from '@/models/AddOnGroup';
 import { roleMiddleware } from '@/lib/auth';
+import Dish from '@/models/Dish';
 
 // Get all addons
 export const GET = async (request) => {
@@ -13,26 +15,21 @@ export const GET = async (request) => {
     const url = new URL(request.url);
     const groupId = url.searchParams.get('group');
     
-    let query = {};
-    if (groupId) {
-      // Need to find addons that belong to this group
-      const group = await AddOnGroup.findById(groupId);
-      if (group && group.addOns && group.addOns.length > 0) {
-        query = { _id: { $in: group.addOns } };
-      } else {
-        // No addons in this group
-        return NextResponse.json({
-          success: true,
-          count: 0,
-          data: []
-        });
-      }
-    }
+    let addons = [];
     
-    const addons = await AddOn.find(query)
-      .sort({ name: 1 })
-      .populate('availabilityStatus')
-      .populate('dishReference');
+    if (groupId) {
+      // Find the group and get its addons
+      const group = await AddOnGroup.findById(groupId).populate('addOns');
+      if (group && group.addOns) {
+        addons = group.addOns;
+      }
+    } else {
+      // Get all addons
+      addons = await AddOn.find({})
+        .sort({ name: 1 })
+        .populate('availabilityStatus')
+        .populate('dishReference');
+    }
     
     return NextResponse.json({
       success: true,
@@ -51,12 +48,11 @@ export const GET = async (request) => {
 // Create a new addon
 const createHandler = async (request) => {
   try {
-    const addonData = await request.json();
-    const { name, price, addonGroupId, dishReference } = addonData;
+    const { name, price, addonGroupId, availabilityStatus, dishReference } = await request.json();
     
-    if (!name || !addonGroupId) {
+    if (!dishReference || !addonGroupId) {
       return NextResponse.json(
-        { success: false, message: 'Addon name and group ID are required' },
+        { success: false, message: 'Dish reference and add-on group are required' },
         { status: 400 }
       );
     }
@@ -65,35 +61,44 @@ const createHandler = async (request) => {
     
     // Check if addon group exists
     const addonGroup = await AddOnGroup.findById(addonGroupId);
-    
     if (!addonGroup) {
       return NextResponse.json(
-        { success: false, message: 'Addon group not found' },
+        { success: false, message: 'Add-on group not found' },
         { status: 404 }
       );
     }
     
-    // Create addon data without addonGroupId which is not part of the schema
-    const { addonGroupId: _, ...addonToCreate } = addonData;
+    // Check if the dish exists
+    const dish = await Dish.findById(dishReference);
+    if (!dish) {
+      return NextResponse.json(
+        { success: false, message: 'Referenced dish not found' },
+        { status: 404 }
+      );
+    }
     
     // Create new addon
-    const addon = await AddOn.create(addonToCreate);
+    const addon = await AddOn.create({
+      name: name || dish.dishName,
+      price: price || 0,
+      // Pass as Boolean, not ObjectId
+      availabilityStatus: availabilityStatus === true || availabilityStatus === 'true', 
+      dishReference
+    });
     
     // Add addon to group
-    await AddOnGroup.findByIdAndUpdate(
-      addonGroupId,
-      { $push: { addOns: addon._id } }
-    );
+    addonGroup.addOns.push(addon._id);
+    await addonGroup.save();
     
     return NextResponse.json({
       success: true,
-      message: 'Addon created successfully',
+      message: 'Add-on created successfully',
       data: addon
     });
   } catch (error) {
     console.error('Error creating addon:', error);
     return NextResponse.json(
-      { success: false, message: 'Server error' },
+      { success: false, message: 'Server error: ' + error.message },
       { status: 500 }
     );
   }

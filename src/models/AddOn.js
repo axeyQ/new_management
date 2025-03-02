@@ -1,24 +1,24 @@
+// src/models/AddOn.js - Modified version
 import mongoose from 'mongoose';
 
 const AddOnSchema = new mongoose.Schema({
-  name: { 
-    type: String, 
-    required: true 
+  name: {
+    type: String,
+    required: true
   },
-  price: { 
-    type: Number 
+  price: {
+    type: Number
   },
-  availabilityStatus: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Status' 
+  // Change this from ObjectId reference to boolean
+  availabilityStatus: {
+    type: Boolean,
+    default: true
   },
-  dishReference: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Dish' 
-  } // Optional reference to an existing dish
+  dishReference: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Dish'
+  }
 });
 
-// Make sure to create and export the model properly
 const AddOn = mongoose.models.AddOn || mongoose.model('AddOn', AddOnSchema);
-
 export default AddOn;

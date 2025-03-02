@@ -28,7 +28,10 @@ import {
   MenuOpen as MenuOpenIcon,
   TableBar as TableTypeIcon,
   ViewModule as LayoutIcon,
-  Kitchen as KitchenIcon, // Import Kitchen icon
+  Kitchen as KitchenIcon,
+  MenuBook as MenuBookIcon,
+  LocalOffer as PricingIcon,
+  AddCircleOutline as AddOnIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -143,6 +146,30 @@ const Sidebar = ({ open, toggleDrawer }) => {
               </ListItemIcon>
               <ListItemText primary="Dishes" />
             </ListItemButton>
+
+            <ListItemButton
+              component={Link}
+              href="/dashboard/menu/addons"
+              selected={isActive('/dashboard/menu/addons')}
+              sx={{ pl: 4 }}
+            >
+              <ListItemIcon>
+                <AddOnIcon />
+              </ListItemIcon>
+              <ListItemText primary="Add-ons" />
+            </ListItemButton>
+
+            <ListItemButton
+              component={Link}
+              href="/dashboard/menu/menus"
+              selected={isActive('/dashboard/menu/menus')}
+              sx={{ pl: 4 }}
+            >
+              <ListItemIcon>
+                <MenuBookIcon />
+              </ListItemIcon>
+              <ListItemText primary="Menus" />
+            </ListItemButton>
           </List>
         </Collapse>
 
@@ -210,7 +237,7 @@ const Sidebar = ({ open, toggleDrawer }) => {
           </ListItemButton>
         </ListItem>
 
-        {/* Kitchen Display System - Add this new section */}
+        {/* Kitchen Display System */}
         <ListItem disablePadding>
           <ListItemButton
             component={Link}

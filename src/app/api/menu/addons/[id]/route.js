@@ -1,13 +1,14 @@
+// src/app/api/menu/addons/[id]/route.js
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import AddOn from '@/models/AddOn';
+import AddOnGroup from '@/models/AddOnGroup';
 import { roleMiddleware } from '@/lib/auth';
 
 // Get a specific addon
 export const GET = async (request, { params }) => {
   try {
     const { id } = params;
-    
     await connectDB();
     
     const addon = await AddOn.findById(id)
@@ -16,7 +17,7 @@ export const GET = async (request, { params }) => {
     
     if (!addon) {
       return NextResponse.json(
-        { success: false, message: 'Addon not found' },
+        { success: false, message: 'Add-on not found' },
         { status: 404 }
       );
     }
@@ -38,39 +39,57 @@ export const GET = async (request, { params }) => {
 const updateHandler = async (request, { params }) => {
   try {
     const { id } = params;
-    const { name, price, availabilityStatus, dishReference } = await request.json();
-    
-    if (!name) {
-      return NextResponse.json(
-        { success: false, message: 'Addon name is required' },
-        { status: 400 }
-      );
-    }
+    const { name, price, addonGroupId, availabilityStatus, dishReference } = await request.json();
     
     await connectDB();
     
     // Find addon
     let addon = await AddOn.findById(id);
-    
     if (!addon) {
       return NextResponse.json(
-        { success: false, message: 'Addon not found' },
+        { success: false, message: 'Add-on not found' },
         { status: 404 }
       );
     }
     
     // Update fields
-    addon.name = name;
+    if (name) addon.name = name;
     if (price !== undefined) addon.price = price;
-    if (availabilityStatus) addon.availabilityStatus = availabilityStatus;
-    if (dishReference) addon.dishReference = dishReference;
+    if (availabilityStatus !== undefined) addon.availabilityStatus = availabilityStatus;
+    if (dishReference !== undefined) addon.dishReference = dishReference || null;
     
     // Save updated addon
     await addon.save();
     
+    // Handle group change if needed
+    if (addonGroupId) {
+      // Find all groups that have this addon
+      const groups = await AddOnGroup.find({ addOns: id });
+      
+      // If the addon is already in the requested group, no need to change
+      const alreadyInRequestedGroup = groups.some(g => g._id.toString() === addonGroupId);
+      
+      if (!alreadyInRequestedGroup) {
+        // Remove from current groups
+        for (const group of groups) {
+          group.addOns = group.addOns.filter(
+            addonId => addonId.toString() !== id
+          );
+          await group.save();
+        }
+        
+        // Add to new group
+        const newGroup = await AddOnGroup.findById(addonGroupId);
+        if (newGroup) {
+          newGroup.addOns.push(id);
+          await newGroup.save();
+        }
+      }
+    }
+    
     return NextResponse.json({
       success: true,
-      message: 'Addon updated successfully',
+      message: 'Add-on updated successfully',
       data: addon
     });
   } catch (error) {
@@ -86,25 +105,28 @@ const updateHandler = async (request, { params }) => {
 const deleteHandler = async (request, { params }) => {
   try {
     const { id } = params;
-    
     await connectDB();
     
     const addon = await AddOn.findById(id);
-    
     if (!addon) {
       return NextResponse.json(
-        { success: false, message: 'Addon not found' },
+        { success: false, message: 'Add-on not found' },
         { status: 404 }
       );
     }
     
-    // TODO: Remove addon from its group
+    // Remove addon from any groups
+    await AddOnGroup.updateMany(
+      { addOns: id },
+      { $pull: { addOns: id } }
+    );
     
+    // Delete the addon
     await AddOn.findByIdAndDelete(id);
     
     return NextResponse.json({
       success: true,
-      message: 'Addon deleted successfully'
+      message: 'Add-on deleted successfully'
     });
   } catch (error) {
     console.error('Error deleting addon:', error);
