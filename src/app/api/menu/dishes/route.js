@@ -3,6 +3,7 @@ import connectDB from '@/lib/db';
 import Dish from '@/models/Dish';
 import SubCategory from '@/models/SubCategory';
 import { roleMiddleware } from '@/lib/auth';
+import Variant from '@/models/Variant';
 
 // Get all dishes
 export const GET = async (request) => {
@@ -62,12 +63,55 @@ const createHandler = async (request) => {
       );
     }
     
-    // Add user info
-    dishData.createdBy = request.user._id;
-    dishData.updatedBy = request.user._id;
+    // Extract variants data if present
+    const { variations, ...mainDishData } = dishData;
+    
+    // Add user info for dish
+    mainDishData.createdBy = request.user._id;
+    mainDishData.updatedBy = request.user._id;
     
     // Create new dish
-    const dish = await Dish.create(dishData);
+    const dish = await Dish.create(mainDishData);
+    
+    // Create variants if they exist
+    if (variations && variations.length > 0) {
+      const variantPromises = variations.map(async (variant) => {
+        // Create variant with reference to dish AND include required fields
+        const variantData = {
+          ...variant,
+          dishReference: dish._id,
+          createdBy: request.user._id,
+          updatedBy: request.user._id,
+          // Include required natureTags fields from the parent dish
+          natureTags: {
+            cuisine: dish.natureTags?.cuisine || "Default Cuisine",
+            spiciness: dish.natureTags?.spiciness || "Medium",
+            sweetnessSaltness: dish.natureTags?.sweetnessSaltness || "Medium", 
+            texture: dish.natureTags?.texture || "Smooth",
+            oil: dish.natureTags?.oil || "Regular",
+            temperature: dish.natureTags?.temperature || "Hot",
+            cookingStyle: dish.natureTags?.cookingStyle || "Regular"
+          },
+          // Include required packagingCharges fields
+          packagingCharges: {
+            type: dish.packagingCharges?.type || "fixed",
+            amount: dish.packagingCharges?.amount || 0,
+            appliedAt: dish.packagingCharges?.appliedAt || "dish"
+          }
+        };
+        delete variantData._id; // Remove temporary ID
+        
+        const newVariant = await Variant.create(variantData);
+        return newVariant._id;
+      });
+      
+      // Wait for all variants to be created
+      const variantIds = await Promise.all(variantPromises);
+      
+      // Update dish with variant references
+      dish.variations = variantIds;
+      await dish.save();
+    }
     
     return NextResponse.json({
       success: true,

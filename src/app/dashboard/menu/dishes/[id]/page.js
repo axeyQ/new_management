@@ -1,253 +1,186 @@
+// src/app/dashboard/menu/dishes/[id]/page.js
 'use client';
-
 import { useState, useEffect } from 'react';
+import {
+  Box,
+  Container,
+  Paper,
+  Typography,
+  Grid,
+  Divider,
+  Chip,
+  Button,
+  Alert,
+  CircularProgress,
+  IconButton,
+} from '@mui/material';
+import {
+  ArrowBack as BackIcon,
+  Edit as EditIcon,
+} from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import axios from 'axios';
 import { useAuth } from '@/context/AuthContext';
+import axiosWithAuth from '@/lib/axiosWithAuth';
+import toast from 'react-hot-toast';
+import DishVariants from '@/components/menu/DishVariants'; // Import the variants component
 
-export default function DishDetails({ params }) {
-  const { id } = params;
-  const { user } = useAuth();
+export default function DishDetailPage({ params }) {
+  const { isAuthenticated, loading: authLoading } = useAuth();
   const router = useRouter();
-  
+  const { id } = params;
   const [dish, setDish] = useState(null);
-  const [variants, setVariants] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  
+
   useEffect(() => {
-    const fetchDishDetails = async () => {
-      try {
-        setLoading(true);
-        
-        // Fetch dish details
-        const dishResponse = await axios.get(`/api/menu/dishes/${id}`);
-        setDish(dishResponse.data.data);
-        
-        // Fetch variants for this dish
-        const variantsResponse = await axios.get(`/api/menu/variants?dish=${id}`);
-        setVariants(variantsResponse.data.data);
-        
-        setError(null);
-      } catch (err) {
-        setError('Failed to fetch dish details');
-        console.error('Error fetching dish details:', err);
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    fetchDishDetails();
-  }, [id]);
-  
-  const handleDelete = async () => {
-    if (!confirm('Are you sure you want to delete this dish? This action cannot be undone.')) {
-      return;
+    if (!authLoading && !isAuthenticated) {
+      router.push('/auth/login');
+    } else if (isAuthenticated) {
+      fetchDish();
     }
-    
+  }, [isAuthenticated, authLoading, id, router]);
+
+  const fetchDish = async () => {
+    setLoading(true);
     try {
-      setLoading(true);
-      
-      const token = localStorage.getItem('token');
-      
-      const config = {
-        headers: {
-          Authorization: `Bearer ${token}`
-        }
-      };
-      
-      await axios.delete(`/api/menu/dishes/${id}`, config);
-      
-      router.push('/dashboard/menu');
-    } catch (err) {
-      setError('Failed to delete dish');
-      console.error('Error deleting dish:', err);
+      const res = await axiosWithAuth.get(`/api/menu/dishes/${id}`);
+      if (res.data.success) {
+        setDish(res.data.data);
+      } else {
+        setError(res.data.message || 'Failed to fetch dish details');
+      }
+    } catch (error) {
+      console.error('Error fetching dish:', error);
+      setError('Error loading dish details. Please try again later.');
     } finally {
       setLoading(false);
     }
   };
-  
-  if (loading) {
+
+  const handleEdit = () => {
+    router.push(`/dashboard/menu/dishes/edit/${id}`);
+  };
+
+  const handleBack = () => {
+    router.push('/dashboard/menu/dishes');
+  };
+
+  if (authLoading || loading) {
     return (
-      <div className="flex justify-center items-center h-64">
-        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-500"></div>
-      </div>
+      <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+        <Box display="flex" justifyContent="center" alignItems="center" minHeight="60vh">
+          <CircularProgress />
+        </Box>
+      </Container>
     );
   }
-  
-  if (error || !dish) {
+
+  if (error) {
     return (
-      <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative" role="alert">
-        <strong className="font-bold">Error!</strong>
-        <span className="block sm:inline"> {error || 'Dish not found'}</span>
-      </div>
+      <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+        <Alert severity="error">{error}</Alert>
+      </Container>
     );
   }
-  
+
+  if (!dish) {
+    return (
+      <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+        <Alert severity="warning">Dish not found</Alert>
+      </Container>
+    );
+  }
+
   return (
-    <div>
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold">Dish: {dish.dishName}</h2>
-        
-        <div className="space-x-2">
-          <Link
-            href="/dashboard/menu"
-            className="bg-gray-500 hover:bg-gray-700 text-white px-4 py-2 rounded"
+    <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
+      <Paper sx={{ p: 3 }}>
+        <Box display="flex" alignItems="center" mb={3}>
+          <IconButton onClick={handleBack} sx={{ mr: 1 }}>
+            <BackIcon />
+          </IconButton>
+          <Typography variant="h5" component="h1" sx={{ flexGrow: 1 }}>
+            {dish.dishName}
+          </Typography>
+          <Button
+            variant="outlined"
+            startIcon={<EditIcon />}
+            onClick={handleEdit}
           >
-            Back to Menu
-          </Link>
-          
-          <Link
-            href={`/dashboard/menu/dishes/edit/${id}`}
-            className="bg-yellow-500 hover:bg-yellow-700 text-white px-4 py-2 rounded"
-          >
-            Edit
-          </Link>
-          
-          <Link
-            href={`/dashboard/menu/variants/new?dish=${id}`}
-            className="bg-blue-500 hover:bg-blue-700 text-white px-4 py-2 rounded"
-          >
-            Add Variant
-          </Link>
-          
-          {user?.role === 'admin' && (
-            <button
-              onClick={handleDelete}
-              className="bg-red-500 hover:bg-red-700 text-white px-4 py-2 rounded"
-            >
-              Delete
-            </button>
-          )}
-        </div>
-      </div>
-      
-      {/* Dish Details Section */}
-      <div className="bg-white rounded-lg shadow-md overflow-hidden mb-6">
-        <div className="p-6">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Basic information */}
-            <div>
-              <h3 className="text-gray-700 font-bold mb-2">Dish Name</h3>
-              <p className="flex items-center">
-                {dish.dieteryTag === 'veg' && (
-                  <span className="w-4 h-4 bg-green-500 rounded-full mr-2" title="Vegetarian"></span>
-                )}
-                {dish.dieteryTag === 'non veg' && (
-                  <span className="w-4 h-4 bg-red-500 rounded-full mr-2" title="Non-Vegetarian"></span>
-                )}
-                {dish.dieteryTag === 'egg' && (
-                  <span className="w-4 h-4 bg-yellow-500 rounded-full mr-2" title="Contains Egg"></span>
-                )}
-                {dish.dishName}
-              </p>
-            </div>
-            
-            {dish.shortCode && (
-              <div>
-                <h3 className="text-gray-700 font-bold mb-2">Short Code</h3>
-                <p>{dish.shortCode}</p>
-              </div>
-            )}
-            
-            {dish.description && (
-              <div className="md:col-span-2">
-                <h3 className="text-gray-700 font-bold mb-2">Description</h3>
-                <p>{dish.description}</p>
-              </div>
-            )}
-            
+            Edit Dish
+          </Button>
+        </Box>
+
+        <Grid container spacing={3}>
+          <Grid item xs={12} md={6}>
             {dish.image && (
-              <div className="md:col-span-2">
-                <h3 className="text-gray-700 font-bold mb-2">Image</h3>
-                <div className="border p-2 rounded-lg">
-                  <img 
-                    src={dish.image} 
-                    alt={dish.dishName}
-                    className="max-h-48 object-contain" 
-                  />
-                </div>
-              </div>
+              <Box
+                component="img"
+                src={dish.image}
+                alt={dish.dishName}
+                sx={{
+                  width: '100%',
+                  height: 300,
+                  objectFit: 'cover',
+                  borderRadius: 1,
+                  mb: 2,
+                }}
+              />
             )}
+
+            <Typography variant="body1" gutterBottom>
+              {dish.description || 'No description available.'}
+            </Typography>
+
+            <Box mt={2} display="flex" flexWrap="wrap" gap={1}>
+              <Chip
+                label={dish.dieteryTag}
+                color={
+                  dish.dieteryTag === 'veg'
+                    ? 'success'
+                    : dish.dieteryTag === 'non veg'
+                    ? 'error'
+                    : 'warning'
+                }
+                size="small"
+              />
+              {dish.specialTag && (
+                <Chip label={dish.specialTag} color="secondary" size="small" />
+              )}
+              {dish.spiceLevel && (
+                <Chip label={dish.spiceLevel} size="small" />
+              )}
+            </Box>
+          </Grid>
+
+          <Grid item xs={12} md={6}>
+            <Typography variant="h6" gutterBottom>
+              Details
+            </Typography>
+            <Box component="dl" sx={{ display: 'grid', gridTemplateColumns: 'auto 1fr', gap: 1 }}>
+              <Typography component="dt" variant="body2" fontWeight="bold">
+                Categories:
+              </Typography>
+              <Typography component="dd" variant="body2">
+                {dish.subCategory?.map(cat => cat.subCategoryName).join(', ') || 'None'}
+              </Typography>
+
+              <Typography component="dt" variant="body2" fontWeight="bold">
+                Short Code:
+              </Typography>
+              <Typography component="dd" variant="body2">
+                {dish.shortCode || '-'}
+              </Typography>
+
+              {/* Other dish details */}
+            </Box>
+
+            <Divider sx={{ my: 2 }} />
             
-            {dish.specialTag && (
-              <div>
-                <h3 className="text-gray-700 font-bold mb-2">Special Tag</h3>
-                <p>{dish.specialTag}</p>
-              </div>
-            )}
-            
-            {dish.spiceLevel && (
-              <div>
-                <h3 className="text-gray-700 font-bold mb-2">Spice Level</h3>
-                <p>{dish.spiceLevel}</p>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-      
-      {/* Variants Section */}
-      <div className="mb-6">
-        <div className="flex justify-between items-center mb-4">
-          <h3 className="text-xl font-semibold">Variants</h3>
-          
-          <Link 
-            href={`/dashboard/menu/variants/new?dish=${id}`}
-            className="bg-orange-500 hover:bg-orange-700 text-white px-4 py-2 rounded"
-          >
-            Add Variant
-          </Link>
-        </div>
-        
-        {variants.length === 0 ? (
-          <div className="bg-white rounded-lg shadow-md p-6 text-center">
-            <p className="text-gray-500">No variants found for this dish.</p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {variants.map(variant => (
-              <div key={variant._id} className="bg-white rounded-lg shadow-md overflow-hidden">
-                <div className="p-4 bg-gray-100 border-b">
-                  <h3 className="text-lg font-semibold">{variant.variantName}</h3>
-                </div>
-                
-                {variant.image && (
-                  <div className="h-40 overflow-hidden">
-                    <img 
-                      src={variant.image} 
-                      alt={variant.variantName}
-                      className="w-full h-full object-cover" 
-                    />
-                  </div>
-                )}
-                
-                <div className="p-4">
-                  {variant.description && (
-                    <p className="text-sm text-gray-600 mb-4 line-clamp-2">{variant.description}</p>
-                  )}
-                  
-                  <div className="flex justify-end space-x-2">
-                    <Link 
-                      href={`/dashboard/menu/variants/${variant._id}`}
-                      className="text-blue-500 hover:text-blue-700"
-                    >
-                      View Details
-                    </Link>
-                    <Link 
-                      href={`/dashboard/menu/variants/edit/${variant._id}`}
-                      className="text-yellow-500 hover:text-yellow-700"
-                    >
-                      Edit
-                    </Link>
-                  </div>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
+            {/* Add the variants component here */}
+            <DishVariants dishId={id} />
+          </Grid>
+        </Grid>
+      </Paper>
+    </Container>
   );
 }

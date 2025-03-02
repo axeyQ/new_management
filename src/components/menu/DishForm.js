@@ -24,7 +24,7 @@ import {
 } from '@mui/material';
 import toast from 'react-hot-toast';
 import axiosWithAuth from '@/lib/axiosWithAuth';
-
+import VariantFormSection from './VariantFormSection';
 const ITEM_HEIGHT = 48;
 const ITEM_PADDING_TOP = 8;
 const MenuProps = {
@@ -82,11 +82,31 @@ const DishForm = ({ dish, onSuccess, onCancel }) => {
   const [subCategories, setSubCategories] = useState([]);
   const [loading, setLoading] = useState(false);
   const [loadingSubCategories, setLoadingSubCategories] = useState(true);
-  
+  const [variants, setVariants] = useState(dish?.variations || []);
+
   useEffect(() => {
     fetchSubCategories();
   }, []);
-  
+  const handleVariantsChange = (updatedVariants) => {
+  setVariants(updatedVariants);
+};
+useEffect(() => {
+  if (dish?._id) {
+    const fetchVariants = async () => {
+      try {
+        const res = await axiosWithAuth.get(`/api/menu/dishes/${dish._id}/variants`);
+        if (res.data.success) {
+          setVariants(res.data.data);
+        }
+      } catch (error) {
+        console.error('Error fetching variants:', error);
+      }
+    };
+    
+    fetchVariants();
+  }
+}, [dish]);
+
   const fetchSubCategories = async () => {
     try {
       const res = await axiosWithAuth.get('/api/menu/subcategories');
@@ -140,13 +160,19 @@ const DishForm = ({ dish, onSuccess, onCancel }) => {
     setLoading(true);
     
     try {
+        // Add variants to the form data
+    const dishData = {
+      ...formData,
+      variations: variants, // Add this line to include variants
+    };
+
       const url = dish
         ? `/api/menu/dishes/${dish._id}`
         : '/api/menu/dishes';
       
       const method = dish ? 'put' : 'post';
       
-      const res = await axiosWithAuth[method](url, formData);
+      const res = await axiosWithAuth[method](url, dishData);
       
       if (res.data.success) {
         toast.success(
@@ -510,7 +536,12 @@ const DishForm = ({ dish, onSuccess, onCancel }) => {
             </Grid>
           </Grid>
         </Grid>
-        
+        <Divider sx={{ my: 3 }} />
+<VariantFormSection 
+  variants={variants} 
+  onChange={handleVariantsChange} 
+  dishId={dish?._id}
+/>
         <Divider sx={{ my: 3 }} />
         
         <Typography variant="subtitle1" gutterBottom fontWeight="bold">
@@ -605,6 +636,8 @@ const DishForm = ({ dish, onSuccess, onCancel }) => {
             />
           </Grid>
         </Grid>
+
+       
         
         <Box display="flex" justifyContent="flex-end" gap={2} mt={3}>
           <Button

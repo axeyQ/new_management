@@ -71,6 +71,18 @@ const createHandler = async (request) => {
     
     await connectDB();
     
+    pricingItem = await MenuPricing.create({
+        dish: dishId,
+        variant: variantId || null, // Add variant if provided
+        price,
+        taxSlab,
+        taxAmount,
+        finalPrice,
+        isAvailable: isAvailable !== undefined ? isAvailable : true,
+        createdBy: request.user._id,
+        updatedBy: request.user._id
+      });
+
     // Find menu and dish
     const menu = await Menu.findById(menuId);
     if (!menu) {

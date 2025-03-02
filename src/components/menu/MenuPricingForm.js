@@ -35,7 +35,9 @@ const MenuPricingForm = ({ menuId, pricingItem, onSuccess, onCancel }) => {
   const [selectedDish, setSelectedDish] = useState(null);
   const [loading, setLoading] = useState(false);
   const [loadingDishes, setLoadingDishes] = useState(true);
-  
+  const [selectedVariant, setSelectedVariant] = useState(null);
+  const [availableVariants, setAvailableVariants] = useState([]);
+
   const taxSlabs = [
     { label: 'GST 5%', rate: 5 },
     { label: 'GST 12%', rate: 12 },
@@ -47,7 +49,30 @@ const MenuPricingForm = ({ menuId, pricingItem, onSuccess, onCancel }) => {
   const finalPrice = formData.price
     ? parseFloat(formData.price) + (parseFloat(formData.price) * formData.taxRate) / 100
     : 0;
-  
+  // When a dish is selected, fetch its variants
+useEffect(() => {
+  if (selectedDish) {
+    // Fetch variants for the selected dish
+    const fetchVariants = async () => {
+      try {
+        const res = await axiosWithAuth.get(`/api/menu/dishes/${selectedDish._id}/variants`);
+        if (res.data.success) {
+          setAvailableVariants(res.data.data);
+        } else {
+          setAvailableVariants([]);
+        }
+      } catch (error) {
+        console.error('Error fetching variants:', error);
+        setAvailableVariants([]);
+      }
+    };
+    
+    fetchVariants();
+  } else {
+    setAvailableVariants([]);
+    setSelectedVariant(null);
+  }
+}, [selectedDish]);
   useEffect(() => {
     fetchDishes();
   }, []);
@@ -127,11 +152,23 @@ const MenuPricingForm = ({ menuId, pricingItem, onSuccess, onCancel }) => {
   
   const handleDishChange = (event, newValue) => {
     setSelectedDish(newValue);
+    setSelectedVariant(null);
     setFormData(prev => ({
       ...prev,
       dishId: newValue?._id || '',
+      variantId: ''
     }));
   };
+
+  // Add handler for variant selection
+const handleVariantChange = (event, newValue) => {
+  setSelectedVariant(newValue);
+  setFormData(prev => ({
+    ...prev,
+    variantId: newValue?._id || ''
+  }));
+};
+
   
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -163,6 +200,7 @@ const MenuPricingForm = ({ menuId, pricingItem, onSuccess, onCancel }) => {
         : {
             menuId,
             dishId: formData.dishId,
+            variantId: formData.variantId || null, // Include variant if selected
             price: parseFloat(formData.price),
             taxSlab: formData.taxSlab,
             taxRate: formData.taxRate,
@@ -292,6 +330,53 @@ const MenuPricingForm = ({ menuId, pricingItem, onSuccess, onCancel }) => {
           </Grid>
         </Grid>
         
+<Grid item xs={12}>
+  <Autocomplete
+    options={availableDishes}
+    getOptionLabel={(option) => option.dishName}
+    value={selectedDish}
+    onChange={handleDishChange}
+    loading={loadingDishes}
+    disabled={pricingItem !== null}
+    renderInput={(params) => (
+      <TextField
+        {...params}
+        label="Select Dish"
+        required
+        fullWidth
+        InputProps={{
+          ...params.InputProps,
+          endAdornment: (
+            <>
+              {loadingDishes ? <CircularProgress color="inherit" size={20} /> : null}
+              {params.InputProps.endAdornment}
+            </>
+          ),
+        }}
+      />
+    )}
+  />
+</Grid>
+
+{/* Add variant selector - only show if dish has variants */}
+{availableVariants.length > 0 && (
+  <Grid item xs={12}>
+    <Autocomplete
+      options={availableVariants}
+      getOptionLabel={(option) => option.variantName}
+      value={selectedVariant}
+      onChange={handleVariantChange}
+      renderInput={(params) => (
+        <TextField
+          {...params}
+          label="Select Variant (Optional)"
+          fullWidth
+        />
+      )}
+    />
+  </Grid>
+)}
+
         <Box display="flex" justifyContent="flex-end" gap={2} mt={3}>
           <Button
             variant="outlined"

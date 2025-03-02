@@ -7,6 +7,11 @@ const MenuPricingSchema = new mongoose.Schema({
     ref: 'Dish',
     required: true
   },
+  variant: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Variant',
+    default: null
+  },
   price: {
     type: Number,
     required: true

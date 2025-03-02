@@ -54,7 +54,59 @@ const updateHandler = async (request, { params }) => {
         { status: 404 }
       );
     }
-    
+    if (updateData.variations) {
+      const { variations, ...mainDishData } = updateData;
+      
+      // Process each variant
+      const variantPromises = variations.map(async (variant) => {
+        if (variant._id && !variant._id.startsWith('temp-')) {
+          // Update existing variant
+          await Variant.findByIdAndUpdate(variant._id, {
+            ...variant,
+            updatedBy: request.user._id,
+            updatedAt: Date.now()
+          });
+          return variant._id;
+        } else {
+          // Create new variant
+          const variantData = {
+            ...variant,
+            dishReference: id,
+            createdBy: request.user._id,
+            updatedBy: request.user._id
+          };
+          delete variantData._id; // Remove temporary ID
+          
+          const newVariant = await Variant.create(variantData);
+          return newVariant._id;
+        }
+      });
+      
+      // Get updated variant IDs
+      const updatedVariantIds = await Promise.all(variantPromises);
+      
+      // Find removed variants
+      const removedVariantIds = dish.variations
+        .filter(existingId => !variations.some(v => v._id === existingId.toString()));
+      
+      // Delete removed variants
+      if (removedVariantIds.length > 0) {
+        await Variant.deleteMany({ _id: { $in: removedVariantIds } });
+      }
+      
+      // Update dish with new variant list
+      dish.variations = updatedVariantIds;
+      
+      // Update other dish fields
+      Object.keys(mainDishData).forEach(key => {
+        dish[key] = mainDishData[key];
+      });
+    } else {
+      // Update dish fields without touching variants
+      Object.keys(updateData).forEach(key => {
+        dish[key] = updateData[key];
+      });
+    }
     // Add user info
     updateData.updatedBy = request.user._id;
     updateData.updatedAt = Date.now();
