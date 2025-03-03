@@ -1,6 +1,5 @@
-// src/components/menu/MenuDetails.js
-'use client';
-import { useState, useEffect } from 'react';
+// src/components/menu/MenuDetails.js - Updated to display variant information
+import React, { useState, useEffect } from 'react';
 import {
   Paper,
   Typography,
@@ -23,6 +22,7 @@ import {
   InputAdornment,
   CircularProgress,
   Alert,
+  Collapse,
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -33,6 +33,8 @@ import {
   Restaurant as DishIcon,
   Check as CheckIcon,
   Close as CloseIcon,
+  ExpandMore as ExpandMoreIcon,
+  ExpandLess as ExpandLessIcon,
 } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
 import axiosWithAuth from '@/lib/axiosWithAuth';
@@ -49,6 +51,7 @@ const MenuDetails = ({ menuId }) => {
   const [selectedPricingItem, setSelectedPricingItem] = useState(null);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [pricingItemToDelete, setPricingItemToDelete] = useState(null);
+  const [expandedDishId, setExpandedDishId] = useState(null);
 
   useEffect(() => {
     fetchMenuDetails();
@@ -60,11 +63,12 @@ const MenuDetails = ({ menuId }) => {
       const menuRes = await axiosWithAuth.get(`/api/menu/menus/${menuId}`);
       if (menuRes.data.success) {
         setMenu(menuRes.data.data);
-        
         // Get pricing items
         const pricingRes = await axiosWithAuth.get(`/api/menu/pricing?menu=${menuId}`);
         if (pricingRes.data.success) {
-          setPricingItems(pricingRes.data.data);
+          // Group pricing items by dish for better display
+          const items = pricingRes.data.data;
+          setPricingItems(items);
         }
       } else {
         toast.error(menuRes.data.message || 'Failed to fetch menu details');
@@ -129,8 +133,42 @@ const MenuDetails = ({ menuId }) => {
     router.push('/dashboard/menu/menus');
   };
 
-  const filteredPricingItems = pricingItems.filter(item => 
-    item.dish && item.dish.dishName.toLowerCase().includes(searchTerm.toLowerCase())
+  const toggleExpandDish = (dishId) => {
+    if (expandedDishId === dishId) {
+      setExpandedDishId(null);
+    } else {
+      setExpandedDishId(dishId);
+    }
+  };
+
+  // Group pricing items by dish
+  const groupedPricingItems = pricingItems.reduce((acc, item) => {
+    const dishId = item.dish._id;
+    if (!acc[dishId]) {
+      acc[dishId] = [];
+    }
+    acc[dishId].push(item);
+    return acc;
+  }, {});
+
+  // Now convert to array of { dish, items } for easier rendering
+  const groupedPricingArray = Object.keys(groupedPricingItems).map(dishId => {
+    const items = groupedPricingItems[dishId];
+    return {
+      dish: items[0].dish, // Take the dish from the first item
+      items: items,
+      // Sort items to show base dish first, then variants
+      sortedItems: items.sort((a, b) => {
+        if (!a.variant && b.variant) return -1;
+        if (a.variant && !b.variant) return 1;
+        return 0;
+      })
+    };
+  });
+
+  // Filter by search term
+  const filteredPricingGroups = groupedPricingArray.filter(group => 
+    group.dish.dishName.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   if (loading) {
@@ -159,16 +197,15 @@ const MenuDetails = ({ menuId }) => {
           Menu: {menu.name}
         </Typography>
       </Box>
-      
       <Box mb={3}>
         <Typography variant="body1" color="text.secondary">
           Order Mode: {menu.orderMode}
           {menu.isDefault && <Chip label="Default" color="primary" size="small" sx={{ ml: 1 }} />}
-          <Chip 
-            label={menu.isActive ? 'Active' : 'Inactive'} 
-            color={menu.isActive ? 'success' : 'default'} 
-            size="small" 
-            sx={{ ml: 1 }} 
+          <Chip
+            label={menu.isActive ? 'Active' : 'Inactive'}
+            color={menu.isActive ? 'success' : 'default'}
+            size="small"
+            sx={{ ml: 1 }}
           />
         </Typography>
         {menu.description && (
@@ -177,7 +214,7 @@ const MenuDetails = ({ menuId }) => {
           </Typography>
         )}
       </Box>
-      
+
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <TextField
           placeholder="Search dishes..."
@@ -203,7 +240,7 @@ const MenuDetails = ({ menuId }) => {
           Add Dish to Menu
         </Button>
       </Box>
-      
+
       <TableContainer component={Paper}>
         <Table>
           <TableHead>
@@ -217,66 +254,205 @@ const MenuDetails = ({ menuId }) => {
             </TableRow>
           </TableHead>
           <TableBody>
-            {filteredPricingItems.length === 0 ? (
+            {filteredPricingGroups.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} align="center">
                   {searchTerm ? 'No matching dishes found' : 'No dishes added to this menu yet'}
                 </TableCell>
               </TableRow>
             ) : (
-              filteredPricingItems.map((item) => (
-                <TableRow key={item._id}>
-                  <TableCell>
-                    <Box display="flex" alignItems="center">
-                      {item.dish.image ? (
-                        <Box
-                          component="img"
-                          src={item.dish.image}
-                          alt={item.dish.dishName}
-                          sx={{ width: 40, height: 40, mr: 1, borderRadius: 1, objectFit: 'cover' }}
-                        />
-                      ) : (
-                        <DishIcon sx={{ mr: 1, color: 'primary.main' }} />
-                      )}
-                      <Typography variant="body1">{item.dish.dishName}</Typography>
-                    </Box>
-                  </TableCell>
-                  <TableCell>₹{item.price.toFixed(2)}</TableCell>
-                  <TableCell>₹{item.taxAmount.toFixed(2)}</TableCell>
-                  <TableCell>₹{item.finalPrice.toFixed(2)}</TableCell>
-                  <TableCell>
-                    <Chip
-                      icon={item.isAvailable ? <CheckIcon /> : <CloseIcon />}
-                      label={item.isAvailable ? 'Available' : 'Unavailable'}
-                      color={item.isAvailable ? 'success' : 'default'}
-                      size="small"
-                    />
-                  </TableCell>
-                  <TableCell>
-                    <IconButton
-                      color="primary"
-                      onClick={() => handleOpenPricingForm(item)}
-                      title="Edit Pricing"
-                      size="small"
-                    >
-                      <EditIcon />
-                    </IconButton>
-                    <IconButton
-                      color="error"
-                      onClick={() => handleDeleteClick(item)}
-                      title="Remove from Menu"
-                      size="small"
-                    >
-                      <DeleteIcon />
-                    </IconButton>
-                  </TableCell>
-                </TableRow>
+              filteredPricingGroups.map((group) => (
+                <React.Fragment key={group.dish._id}>
+                  {/* Main dish row */}
+                  <TableRow 
+                    sx={{ 
+                      '& > *': { 
+                        borderBottom: group.items.length > 1 ? 'unset' : undefined 
+                      },
+                      bgcolor: expandedDishId === group.dish._id ? 'rgba(0, 0, 0, 0.04)' : 'inherit'
+                    }}
+                  >
+                    <TableCell>
+                      <Box display="flex" alignItems="center">
+                        {group.items.length > 1 && (
+                          <IconButton 
+                            size="small" 
+                            onClick={() => toggleExpandDish(group.dish._id)}
+                            sx={{ mr: 1 }}
+                          >
+                            {expandedDishId === group.dish._id ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                          </IconButton>
+                        )}
+                        {group.dish.image ? (
+                          <Box
+                            component="img"
+                            src={group.dish.image}
+                            alt={group.dish.dishName}
+                            sx={{ width: 40, height: 40, mr: 1, borderRadius: 1, objectFit: 'cover' }}
+                          />
+                        ) : (
+                          <DishIcon sx={{ mr: 1, color: 'primary.main' }} />
+                        )}
+                        <Typography variant="body1">
+                          {group.dish.dishName}
+                          {group.items.length > 1 && (
+                            <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
+                              {group.items.length} {group.items.length === 1 ? 'price option' : 'price options'}
+                            </Typography>
+                          )}
+                        </Typography>
+                      </Box>
+                    </TableCell>
+                    
+                    {/* Check if this dish has any variants */}
+                    {(() => {
+                      const hasVariants = group.items.some(item => item.variant);
+                      
+                      // If the dish has variants, don't show base pricing
+                      if (hasVariants) {
+                        return (
+                          <>
+                            <TableCell colSpan={3}>
+                              <Typography variant="body2" color="text.secondary" align="center">
+                                Multiple variants available - click to expand
+                              </Typography>
+                            </TableCell>
+                            <TableCell>
+                              <Chip
+                                label="Variants Available"
+                                color="primary"
+                                size="small"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <IconButton 
+                                color="primary"
+                                onClick={() => toggleExpandDish(group.dish._id)}
+                                title="View Variants"
+                                size="small"
+                              >
+                                {expandedDishId === group.dish._id ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+                              </IconButton>
+                            </TableCell>
+                          </>
+                        );
+                      } else {
+                        // No variants - show the base item details
+                        const baseItem = group.items[0];
+                        return (
+                          <>
+                            <TableCell>₹{baseItem.price.toFixed(2)}</TableCell>
+                            <TableCell>₹{baseItem.taxAmount.toFixed(2)}</TableCell>
+                            <TableCell>₹{baseItem.finalPrice.toFixed(2)}</TableCell>
+                            <TableCell>
+                              <Chip
+                                icon={baseItem.isAvailable ? <CheckIcon /> : <CloseIcon />}
+                                label={baseItem.isAvailable ? 'Available' : 'Unavailable'}
+                                color={baseItem.isAvailable ? 'success' : 'default'}
+                                size="small"
+                              />
+                            </TableCell>
+                            <TableCell>
+                              <IconButton
+                                color="primary"
+                                onClick={() => handleOpenPricingForm(baseItem)}
+                                title="Edit Pricing"
+                                size="small"
+                              >
+                                <EditIcon />
+                              </IconButton>
+                              <IconButton
+                                color="error"
+                                onClick={() => handleDeleteClick(baseItem)}
+                                title="Remove from Menu"
+                                size="small"
+                              >
+                                <DeleteIcon />
+                              </IconButton>
+                            </TableCell>
+                          </>
+                        );
+                      }
+                    })()}
+                  </TableRow>
+                  
+                  {/* Variant rows (if dish has variants and is expanded) */}
+                  {expandedDishId === group.dish._id && group.items.length > 1 && (
+                    <TableRow>
+                      <TableCell colSpan={6} sx={{ py: 0 }}>
+                        <Collapse in={expandedDishId === group.dish._id} timeout="auto" unmountOnExit>
+                          <Box sx={{ margin: 1, py: 2 }}>
+                            <Typography variant="subtitle2" gutterBottom component="div">
+                              Variants
+                            </Typography>
+                            <Table size="small" sx={{ ml: 4 }}>
+                              <TableHead>
+                                <TableRow>
+                                  <TableCell>Variant</TableCell>
+                                  <TableCell>Price</TableCell>
+                                  <TableCell>Tax</TableCell>
+                                  <TableCell>Final</TableCell>
+                                  <TableCell>Status</TableCell>
+                                  <TableCell>Actions</TableCell>
+                                </TableRow>
+                              </TableHead>
+                              <TableBody>
+                                {group.sortedItems.map((item) => {
+                                  // Display all items that have variants
+                                  // OR display the base item only if there are no items with variants
+                                  const hasVariants = group.items.some(i => i.variant);
+                                  
+                                  if ((item.variant) || (!hasVariants && !item.variant)) {
+                                    return (
+                                      <TableRow key={item._id}>
+                                        <TableCell>
+                                          {item.variant ? item.variant.variantName : 'Base Dish'}
+                                        </TableCell>
+                                        <TableCell>₹{item.price.toFixed(2)}</TableCell>
+                                        <TableCell>₹{item.taxAmount.toFixed(2)}</TableCell>
+                                        <TableCell>₹{item.finalPrice.toFixed(2)}</TableCell>
+                                        <TableCell>
+                                          <Chip
+                                            label={item.isAvailable ? 'Available' : 'Unavailable'}
+                                            color={item.isAvailable ? 'success' : 'default'}
+                                            size="small"
+                                          />
+                                        </TableCell>
+                                        <TableCell>
+                                          <IconButton
+                                            color="primary"
+                                            onClick={() => handleOpenPricingForm(item)}
+                                            size="small"
+                                          >
+                                            <EditIcon />
+                                          </IconButton>
+                                          <IconButton
+                                            color="error"
+                                            onClick={() => handleDeleteClick(item)}
+                                            size="small"
+                                          >
+                                            <DeleteIcon />
+                                          </IconButton>
+                                        </TableCell>
+                                      </TableRow>
+                                    );
+                                  }
+                                  return null;
+                                })}
+                              </TableBody>
+                            </Table>
+                          </Box>
+                        </Collapse>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                </React.Fragment>
               ))
             )}
           </TableBody>
         </Table>
       </TableContainer>
-      
+
       {/* Menu Pricing Form Dialog */}
       <Dialog
         open={openPricingForm}
@@ -293,7 +469,7 @@ const MenuDetails = ({ menuId }) => {
           />
         </DialogContent>
       </Dialog>
-      
+
       {/* Delete Confirmation Dialog */}
       <Dialog
         open={openDeleteDialog}
@@ -302,7 +478,11 @@ const MenuDetails = ({ menuId }) => {
         <DialogTitle>Confirm Remove</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Are you sure you want to remove &quot;{pricingItemToDelete?.dish?.dishName}&quot; from this menu?
+            Are you sure you want to remove&nbsp;
+            {pricingItemToDelete?.variant 
+              ? `"${pricingItemToDelete?.dish?.dishName} - ${pricingItemToDelete?.variant?.variantName}"` 
+              : `"${pricingItemToDelete?.dish?.dishName}"`
+            } from this menu?
           </DialogContentText>
         </DialogContent>
         <DialogActions>

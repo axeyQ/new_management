@@ -2,16 +2,26 @@
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import Dish from '@/models/Dish';
-import Variant from '@/models/Variant';
-import { authMiddleware } from '@/lib/auth';
+import { verifyAuth } from '@/lib/auth';
 
-// Get variants for a specific dish
-export const GET = authMiddleware(async (request, { params }) => {
+export async function GET(request, { params }) {
+  // Verify authentication
+  const authResult = await verifyAuth(request);
+  if (!authResult.success) {
+    return NextResponse.json(
+      { success: false, message: authResult.message },
+      { status: 401 }
+    );
+  }
+  
   try {
-    const { id } = params;
+    // Connect to database
     await connectDB();
     
-    // Find the dish with populated variants
+    // Get dish ID from the route params
+    const { id } = params;
+    
+    // Find the dish and populate its variations
     const dish = await Dish.findById(id).populate('variations');
     
     if (!dish) {
@@ -21,9 +31,9 @@ export const GET = authMiddleware(async (request, { params }) => {
       );
     }
     
+    // Return the variations
     return NextResponse.json({
       success: true,
-      count: dish.variations?.length || 0,
       data: dish.variations || []
     });
   } catch (error) {
@@ -33,4 +43,4 @@ export const GET = authMiddleware(async (request, { params }) => {
       { status: 500 }
     );
   }
-});
+}

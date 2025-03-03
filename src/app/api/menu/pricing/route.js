@@ -1,19 +1,20 @@
-// src/app/api/menu/pricing/route.js
+// src/app/api/menu/pricing/route.js - Updated to handle variants
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import Menu from '@/models/Menu';
 import MenuPricing from '@/models/MenuPricing';
 import Dish from '@/models/Dish';
+import Variant from '@/models/Variant';
 import { roleMiddleware } from '@/lib/auth';
 
 // Get menu pricing
 export const GET = async (request) => {
   try {
     await connectDB();
-    
     const url = new URL(request.url);
     const menuId = url.searchParams.get('menu');
     const dishId = url.searchParams.get('dish');
+    const variantId = url.searchParams.get('variant');
     
     if (!menuId && !dishId) {
       return NextResponse.json(
@@ -23,7 +24,6 @@ export const GET = async (request) => {
     }
     
     let query = {};
-    
     if (menuId) {
       const menu = await Menu.findById(menuId);
       if (!menu) {
@@ -39,10 +39,15 @@ export const GET = async (request) => {
       query.dish = dishId;
     }
     
+    if (variantId) {
+      query.variant = variantId;
+    }
+    
     const pricingItems = await MenuPricing.find(query)
       .populate('dish', 'dishName image dieteryTag')
+      .populate('variant', 'variantName')
       .sort({ 'dish.dishName': 1 });
-    
+      
     return NextResponse.json({
       success: true,
       count: pricingItems.length,
@@ -60,7 +65,7 @@ export const GET = async (request) => {
 // Add or update menu pricing
 const createHandler = async (request) => {
   try {
-    const { menuId, dishId, price, taxSlab, taxRate, isAvailable } = await request.json();
+    const { menuId, dishId, variantId, price, taxSlab, taxRate, isAvailable } = await request.json();
     
     if (!menuId || !dishId || price === undefined) {
       return NextResponse.json(
@@ -71,18 +76,6 @@ const createHandler = async (request) => {
     
     await connectDB();
     
-    pricingItem = await MenuPricing.create({
-        dish: dishId,
-        variant: variantId || null, // Add variant if provided
-        price,
-        taxSlab,
-        taxAmount,
-        finalPrice,
-        isAvailable: isAvailable !== undefined ? isAvailable : true,
-        createdBy: request.user._id,
-        updatedBy: request.user._id
-      });
-
     // Find menu and dish
     const menu = await Menu.findById(menuId);
     if (!menu) {
@@ -100,19 +93,53 @@ const createHandler = async (request) => {
       );
     }
     
+    // Verify variant if provided
+    let variant = null;
+    if (variantId) {
+      variant = await Variant.findById(variantId);
+      if (!variant) {
+        return NextResponse.json(
+          { success: false, message: 'Variant not found' },
+          { status: 404 }
+        );
+      }
+      
+      // Check that variant belongs to the selected dish
+      const variantBelongsToDish = dish.variations && dish.variations.some(
+        v => v.toString() === variantId.toString()
+      );
+      
+      if (!variantBelongsToDish) {
+        return NextResponse.json(
+          { success: false, message: 'Variant does not belong to the selected dish' },
+          { status: 400 }
+        );
+      }
+    }
+    
     // Calculate tax and final price
     const taxAmount = (price * taxRate) / 100;
     const finalPrice = price + taxAmount;
     
-    // Check if pricing already exists for this dish in this menu
+    // Check if pricing already exists for this dish/variant in this menu
     let pricingExists = false;
     let existingPricing = null;
     
     if (menu.dishPricing && menu.dishPricing.length > 0) {
-      existingPricing = await MenuPricing.findOne({
+      // Query needs to match both dish and variant (or lack of variant)
+      const query = { 
         _id: { $in: menu.dishPricing },
         dish: dishId
-      });
+      };
+      
+      if (variantId) {
+        query.variant = variantId;
+      } else {
+        // If no variant specified, we need to find entries with null/undefined variant
+        query.variant = { $exists: false };
+      }
+      
+      existingPricing = await MenuPricing.findOne(query);
       
       if (existingPricing) {
         pricingExists = true;
@@ -136,8 +163,10 @@ const createHandler = async (request) => {
       // Create new pricing
       pricingItem = await MenuPricing.create({
         dish: dishId,
+        variant: variantId || null, // Only include variant if provided
         price,
         taxSlab,
+        taxRate,
         taxAmount,
         finalPrice,
         isAvailable: isAvailable !== undefined ? isAvailable : true,
@@ -154,8 +183,9 @@ const createHandler = async (request) => {
     
     // Return populated pricing item
     const populatedPricing = await MenuPricing.findById(pricingItem._id)
-      .populate('dish', 'dishName image dieteryTag');
-    
+      .populate('dish', 'dishName image dieteryTag')
+      .populate('variant', 'variantName');
+      
     return NextResponse.json({
       success: true,
       message: pricingExists ? 'Menu pricing updated successfully' : 'Menu pricing added successfully',

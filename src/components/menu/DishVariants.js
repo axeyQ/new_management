@@ -15,7 +15,7 @@ import {
   CircularProgress,
   Alert,
 } from '@mui/material';
-import axiosWithAuth from '@/lib/axiosWithAuth';
+import axios from 'axios';
 
 const DishVariants = ({ dishId }) => {
   const [variants, setVariants] = useState([]);
@@ -23,48 +23,58 @@ const DishVariants = ({ dishId }) => {
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (dishId) {
-      fetchVariants();
-    }
-  }, [dishId]);
-
-  const fetchVariants = async () => {
-    setLoading(true);
-    try {
-      const res = await axiosWithAuth.get(`/api/menu/dishes/${dishId}/variants`);
-      if (res.data.success) {
-        setVariants(res.data.data);
-      } else {
-        setError(res.data.message || 'Failed to fetch variants');
+    const fetchVariants = async () => {
+      if (!dishId) {
+        setLoading(false);
+        return;
       }
-    } catch (error) {
-      console.error('Error fetching variants:', error);
-      setError('Error loading variants. Please try again later.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
+      
+      setLoading(true);
+      try {
+        // Using axios directly without the axiosWithAuth wrapper to simplify
+        const token = localStorage.getItem('token');
+        const response = await axios.get(`/api/menu/dishes/${dishId}/variants`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        
+        if (response.data.success) {
+          setVariants(response.data.data);
+        } else {
+          setError(response.data.message || 'Failed to load variants');
+        }
+      } catch (err) {
+        console.error('Error fetching variants:', err);
+        setError('Error loading variants. Please try again.');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchVariants();
+  }, [dishId]);
+  
   if (loading) {
     return (
-      <Box display="flex" justifyContent="center" padding={3}>
+      <Box display="flex" justifyContent="center" py={2}>
         <CircularProgress size={24} />
       </Box>
     );
   }
-
+  
   if (error) {
     return <Alert severity="error">{error}</Alert>;
   }
-
+  
   if (variants.length === 0) {
     return (
-      <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+      <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic', py: 2 }}>
         No variants available for this dish.
       </Typography>
     );
   }
-
+  
   return (
     <Box mt={2}>
       <Typography variant="subtitle1" gutterBottom>
@@ -86,8 +96,8 @@ const DishVariants = ({ dishId }) => {
                 <TableCell>{variant.description || '-'}</TableCell>
                 <TableCell>
                   <Chip
-                    label={variant.isAvailable ? 'Available' : 'Unavailable'}
-                    color={variant.isAvailable ? 'success' : 'default'}
+                    label={variant.isAvailable !== false ? 'Available' : 'Unavailable'}
+                    color={variant.isAvailable !== false ? 'success' : 'default'}
                     size="small"
                   />
                 </TableCell>

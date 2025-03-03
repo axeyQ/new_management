@@ -1,5 +1,4 @@
-// src/components/menu/MenuPricingForm.js
-'use client';
+// src/components/menu/MenuPricingForm.js - Updated with variant support
 import { useState, useEffect } from 'react';
 import {
   TextField,
@@ -17,6 +16,7 @@ import {
   CircularProgress,
   Grid,
   InputAdornment,
+  Divider,
 } from '@mui/material';
 import toast from 'react-hot-toast';
 import axiosWithAuth from '@/lib/axiosWithAuth';
@@ -24,6 +24,7 @@ import axiosWithAuth from '@/lib/axiosWithAuth';
 const MenuPricingForm = ({ menuId, pricingItem, onSuccess, onCancel }) => {
   const [formData, setFormData] = useState({
     dishId: pricingItem?.dish?._id || '',
+    variantId: pricingItem?.variant?._id || '',
     price: pricingItem?.price || '',
     taxSlab: pricingItem?.taxSlab || 'GST 5%',
     taxRate: pricingItem?.taxRate || 5,
@@ -37,7 +38,8 @@ const MenuPricingForm = ({ menuId, pricingItem, onSuccess, onCancel }) => {
   const [loadingDishes, setLoadingDishes] = useState(true);
   const [selectedVariant, setSelectedVariant] = useState(null);
   const [availableVariants, setAvailableVariants] = useState([]);
-
+  const [loadingVariants, setLoadingVariants] = useState(false);
+  
   const taxSlabs = [
     { label: 'GST 5%', rate: 5 },
     { label: 'GST 12%', rate: 12 },
@@ -49,39 +51,62 @@ const MenuPricingForm = ({ menuId, pricingItem, onSuccess, onCancel }) => {
   const finalPrice = formData.price
     ? parseFloat(formData.price) + (parseFloat(formData.price) * formData.taxRate) / 100
     : 0;
+  
   // When a dish is selected, fetch its variants
-useEffect(() => {
-  if (selectedDish) {
-    // Fetch variants for the selected dish
-    const fetchVariants = async () => {
-      try {
-        const res = await axiosWithAuth.get(`/api/menu/dishes/${selectedDish._id}/variants`);
-        if (res.data.success) {
-          setAvailableVariants(res.data.data);
-        } else {
-          setAvailableVariants([]);
-        }
-      } catch (error) {
-        console.error('Error fetching variants:', error);
-        setAvailableVariants([]);
-      }
-    };
-    
-    fetchVariants();
-  } else {
-    setAvailableVariants([]);
-    setSelectedVariant(null);
-  }
-}, [selectedDish]);
+  useEffect(() => {
+    if (selectedDish) {
+      fetchVariants(selectedDish._id);
+    } else {
+      setAvailableVariants([]);
+      setSelectedVariant(null);
+      setFormData(prev => ({ ...prev, variantId: '' }));
+    }
+  }, [selectedDish]);
+  
   useEffect(() => {
     fetchDishes();
   }, []);
   
   useEffect(() => {
-    if (pricingItem && pricingItem.dish) {
-      setSelectedDish(pricingItem.dish);
+    if (pricingItem) {
+      if (pricingItem.dish) {
+        setSelectedDish(pricingItem.dish);
+      }
+      
+      if (pricingItem.variant) {
+        setSelectedVariant(pricingItem.variant);
+        fetchVariants(pricingItem.dish._id);
+      }
     }
   }, [pricingItem]);
+  
+  const fetchVariants = async (dishId) => {
+    if (!dishId) return;
+    
+    setLoadingVariants(true);
+    try {
+      const res = await axiosWithAuth.get(`/api/menu/dishes/${dishId}/variants`);
+      if (res.data.success) {
+        setAvailableVariants(res.data.data);
+        
+        // If this is an edit and we have a selected variant, find it in the results
+        if (formData.variantId) {
+          const variant = res.data.data.find(v => v._id === formData.variantId);
+          if (variant) {
+            setSelectedVariant(variant);
+          }
+        }
+      } else {
+        setAvailableVariants([]);
+        toast.error('Failed to load variants');
+      }
+    } catch (error) {
+      console.error('Error fetching variants:', error);
+      setAvailableVariants([]);
+    } finally {
+      setLoadingVariants(false);
+    }
+  };
   
   const fetchDishes = async () => {
     setLoadingDishes(true);
@@ -95,23 +120,69 @@ useEffect(() => {
         if (menuId) {
           const pricingRes = await axiosWithAuth.get(`/api/menu/pricing?menu=${menuId}`);
           if (pricingRes.data.success) {
-            const existingDishIds = pricingRes.data.data.map(item => item.dish._id);
+            const existingPricing = pricingRes.data.data;
             
-            // If editing an existing item, we include that dish in available options
+            // Build a Set of dish+variant combinations that already exist
+            const existingCombinations = new Set();
+            existingPricing.forEach(item => {
+              // For dish only (no variant), the key is just the dish ID
+              if (!item.variant) {
+                existingCombinations.add(item.dish._id);
+              } else {
+                // For dish+variant combinations, the key is dish ID + variant ID
+                existingCombinations.add(`${item.dish._id}-${item.variant._id}`);
+              }
+            });
+            
+            // If editing an existing item, include its dish
             if (pricingItem && pricingItem.dish) {
-              const availableDishes = dishesRes.data.data.filter(dish => 
-                !existingDishIds.includes(dish._id) || dish._id === pricingItem.dish._id
-              );
-              setAvailableDishes(availableDishes);
+              // For dishes with variants, we allow adding the dish if either:
+              // 1. It's the current dish being edited
+              // 2. It has variants and not all variants are already priced
+              const availableDishList = dishesRes.data.data.filter(dish => {
+                // If it's the current dish being edited, include it
+                if (pricingItem.dish._id === dish._id) {
+                  return true;
+                }
+                
+                // For dishes without variants, check if they're already in pricing
+                if (!dish.variations || dish.variations.length === 0) {
+                  return !existingCombinations.has(dish._id);
+                }
+                
+                // For dishes with variants, check if all variants are already priced
+                // We'll assume a dish with variants is available if the dish itself isn't priced
+                // or if at least one variant isn't priced
+                if (!existingCombinations.has(dish._id)) {
+                  return true;
+                }
+                
+                // If we get here, dish has variants and might have some that aren't priced
+                // This would require checking each variant, which we'll do when a dish is selected
+                return true;
+              });
+              
+              setAvailableDishes(availableDishList);
             } else {
-              // For new items, exclude all existing dishes
-              const availableDishes = dishesRes.data.data.filter(dish => 
-                !existingDishIds.includes(dish._id)
-              );
-              setAvailableDishes(availableDishes);
+              // For new items, exclude all dishes that are already fully priced
+              const availableDishList = dishesRes.data.data.filter(dish => {
+                // For dishes without variants, check if they're already in pricing
+                if (!dish.variations || dish.variations.length === 0) {
+                  return !existingCombinations.has(dish._id);
+                }
+                
+                // For dishes with variants, always include them - we'll filter variants later
+                return true;
+              });
+              
+              setAvailableDishes(availableDishList);
             }
+          } else {
+            // If pricing fetch fails, just show all dishes
+            setAvailableDishes(dishesRes.data.data);
           }
         } else {
+          // If no menu ID, show all dishes
           setAvailableDishes(dishesRes.data.data);
         }
       } else {
@@ -159,16 +230,14 @@ useEffect(() => {
       variantId: ''
     }));
   };
-
-  // Add handler for variant selection
-const handleVariantChange = (event, newValue) => {
-  setSelectedVariant(newValue);
-  setFormData(prev => ({
-    ...prev,
-    variantId: newValue?._id || ''
-  }));
-};
-
+  
+  const handleVariantChange = (event, newValue) => {
+    setSelectedVariant(newValue);
+    setFormData(prev => ({
+      ...prev,
+      variantId: newValue?._id || ''
+    }));
+  };
   
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -180,6 +249,12 @@ const handleVariantChange = (event, newValue) => {
     
     if (!formData.price || parseFloat(formData.price) <= 0) {
       toast.error('Please enter a valid price');
+      return;
+    }
+    
+    // If dish has variants, require a variant selection
+    if (availableVariants.length > 0 && !formData.variantId) {
+      toast.error("This dish has variants. Please select a specific variant to price.");
       return;
     }
     
@@ -260,6 +335,41 @@ const handleVariantChange = (event, newValue) => {
             />
           </Grid>
           
+          {/* Variant selector - only show if dish has variants */}
+          {availableVariants.length > 0 && (
+            <Grid item xs={12}>
+              <Autocomplete
+                options={availableVariants}
+                getOptionLabel={(option) => option.variantName}
+                value={selectedVariant}
+                onChange={handleVariantChange}
+                loading={loadingVariants}
+                disabled={pricingItem?.variant !== undefined}
+                renderInput={(params) => (
+                  <TextField
+                    {...params}
+                    label="Select Variant"
+                    fullWidth
+                    required
+                    error={!selectedVariant && !pricingItem}
+                    helperText={!selectedVariant && !pricingItem ? 
+                      "A variant must be selected since this dish has variants" : 
+                      "Select a variant to price"}
+                    InputProps={{
+                      ...params.InputProps,
+                      endAdornment: (
+                        <>
+                          {loadingVariants ? <CircularProgress color="inherit" size={20} /> : null}
+                          {params.InputProps.endAdornment}
+                        </>
+                      ),
+                    }}
+                  />
+                )}
+              />
+            </Grid>
+          )}
+          
           <Grid item xs={12} sm={6}>
             <TextField
               fullWidth
@@ -301,12 +411,10 @@ const handleVariantChange = (event, newValue) => {
               <Grid container spacing={1}>
                 <Grid item xs={6}>Base Price:</Grid>
                 <Grid item xs={6} textAlign="right">₹{parseFloat(formData.price || 0).toFixed(2)}</Grid>
-                
                 <Grid item xs={6}>Tax ({formData.taxRate}%):</Grid>
                 <Grid item xs={6} textAlign="right">
                   ₹{((parseFloat(formData.price || 0) * formData.taxRate) / 100).toFixed(2)}
                 </Grid>
-                
                 <Grid item xs={6} fontWeight="bold">Final Price:</Grid>
                 <Grid item xs={6} textAlign="right" fontWeight="bold">
                   ₹{finalPrice.toFixed(2)}
@@ -330,53 +438,6 @@ const handleVariantChange = (event, newValue) => {
           </Grid>
         </Grid>
         
-<Grid item xs={12}>
-  <Autocomplete
-    options={availableDishes}
-    getOptionLabel={(option) => option.dishName}
-    value={selectedDish}
-    onChange={handleDishChange}
-    loading={loadingDishes}
-    disabled={pricingItem !== null}
-    renderInput={(params) => (
-      <TextField
-        {...params}
-        label="Select Dish"
-        required
-        fullWidth
-        InputProps={{
-          ...params.InputProps,
-          endAdornment: (
-            <>
-              {loadingDishes ? <CircularProgress color="inherit" size={20} /> : null}
-              {params.InputProps.endAdornment}
-            </>
-          ),
-        }}
-      />
-    )}
-  />
-</Grid>
-
-{/* Add variant selector - only show if dish has variants */}
-{availableVariants.length > 0 && (
-  <Grid item xs={12}>
-    <Autocomplete
-      options={availableVariants}
-      getOptionLabel={(option) => option.variantName}
-      value={selectedVariant}
-      onChange={handleVariantChange}
-      renderInput={(params) => (
-        <TextField
-          {...params}
-          label="Select Variant (Optional)"
-          fullWidth
-        />
-      )}
-    />
-  </Grid>
-)}
-
         <Box display="flex" justifyContent="flex-end" gap={2} mt={3}>
           <Button
             variant="outlined"

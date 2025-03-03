@@ -156,13 +156,19 @@ useEffect(() => {
       toast.error('Please select at least one subcategory');
       return;
     }
-    
+    const submitData = {...formData};
+    if (submitData.servingInfo && submitData.servingInfo.unit === '') {
+      // Either set a default value
+      submitData.servingInfo.unit = 'pieces';
+      // Or remove the unit property altogether if it's empty
+      // delete submitData.servingInfo.unit;
+    }
     setLoading(true);
     
     try {
         // Add variants to the form data
     const dishData = {
-      ...formData,
+      ...submitData,
       variations: variants, // Add this line to include variants
     };
 
@@ -300,7 +306,6 @@ useEffect(() => {
                 value={formData.dieteryTag}
                 onChange={handleChange}
                 label="Dietary Type"
-                required
               >
                 {dietaryTags.map((tag) => (
                   <MenuItem key={tag} value={tag}>
@@ -516,7 +521,6 @@ useEffect(() => {
                   value={formData.packagingCharges.amount}
                   onChange={(e) => handleNestedChange('packagingCharges', 'amount', parseFloat(e.target.value) || 0)}
                   margin="normal"
-                  required
                 />
               </Grid>
               
@@ -556,7 +560,6 @@ useEffect(() => {
               value={formData.natureTags.cuisine}
               onChange={(e) => handleNestedChange('natureTags', 'cuisine', e.target.value)}
               margin="normal"
-              required
             />
           </Grid>
           
@@ -567,7 +570,6 @@ useEffect(() => {
               value={formData.natureTags.spiciness}
               onChange={(e) => handleNestedChange('natureTags', 'spiciness', e.target.value)}
               margin="normal"
-              required
             />
           </Grid>
           
@@ -578,7 +580,6 @@ useEffect(() => {
               value={formData.natureTags.sweetnessSaltness}
               onChange={(e) => handleNestedChange('natureTags', 'sweetnessSaltness', e.target.value)}
               margin="normal"
-              required
             />
           </Grid>
           
@@ -589,7 +590,6 @@ useEffect(() => {
               value={formData.natureTags.texture}
               onChange={(e) => handleNestedChange('natureTags', 'texture', e.target.value)}
               margin="normal"
-              required
             />
           </Grid>
           
@@ -600,7 +600,6 @@ useEffect(() => {
               value={formData.natureTags.oil}
               onChange={(e) => handleNestedChange('natureTags', 'oil', e.target.value)}
               margin="normal"
-              required
             />
           </Grid>
           
@@ -611,7 +610,6 @@ useEffect(() => {
               value={formData.natureTags.temperature}
               onChange={(e) => handleNestedChange('natureTags', 'temperature', e.target.value)}
               margin="normal"
-              required
             />
           </Grid>
           
@@ -622,7 +620,6 @@ useEffect(() => {
               value={formData.natureTags.cookingStyle}
               onChange={(e) => handleNestedChange('natureTags', 'cookingStyle', e.target.value)}
               margin="normal"
-              required
             />
           </Grid>
           

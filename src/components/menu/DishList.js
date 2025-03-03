@@ -18,6 +18,10 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
   Chip,
   TextField,
   Grid,
@@ -26,12 +30,9 @@ import {
   CardMedia,
   CardActions,
   InputAdornment,
-  FormControl,
-  InputLabel,
-  Select,
-  MenuItem,
   Collapse,
   CircularProgress,
+  Alert,
 } from '@mui/material';
 import {
   Edit as EditIcon,
@@ -44,14 +45,112 @@ import {
   ExpandMore,
   ExpandLess,
 } from '@mui/icons-material';
-import { useRouter } from 'next/navigation';
+import axios from 'axios';
 import axiosWithAuth from '@/lib/axiosWithAuth';
 import toast from 'react-hot-toast';
-import Link from 'next/link';
+import DishForm from './DishForm';
+import { useRouter } from 'next/navigation';
+
+// Expandable Variants Row Component
+const ExpandableVariantsRow = ({ dishId, isExpanded }) => {
+  const [variants, setVariants] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    const fetchVariants = async () => {
+      if (!isExpanded) return; // Only fetch when expanded
+      
+      setLoading(true);
+      try {
+        const token = localStorage.getItem('token');
+        const response = await axios.get(`/api/menu/dishes/${dishId}/variants`, {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+        
+        if (response.data.success) {
+          setVariants(response.data.data);
+        } else {
+          setError(response.data.message || 'Failed to load variants');
+        }
+      } catch (err) {
+        console.error('Error fetching variants:', err);
+        setError('Error loading variants');
+      } finally {
+        setLoading(false);
+      }
+    };
+    
+    fetchVariants();
+  }, [dishId, isExpanded]);
+  
+  if (!isExpanded) return null;
+  
+  if (loading) {
+    return (
+      <Box display="flex" justifyContent="center" p={2}>
+        <CircularProgress size={24} />
+      </Box>
+    );
+  }
+  
+  if (error) {
+    return (
+      <Box p={2}>
+        <Alert severity="error">{error}</Alert>
+      </Box>
+    );
+  }
+  
+  if (variants.length === 0) {
+    return (
+      <Box p={2}>
+        <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
+          No variants available for this dish.
+        </Typography>
+      </Box>
+    );
+  }
+  
+  return (
+    <Box sx={{ py: 2, px: 4 }}>
+      <Typography variant="subtitle2" gutterBottom component="div">
+        Variants
+      </Typography>
+      <TableContainer component={Paper} variant="outlined">
+        <Table size="small">
+          <TableHead>
+            <TableRow>
+              <TableCell>Variant Name</TableCell>
+              <TableCell>Description</TableCell>
+              <TableCell>Status</TableCell>
+            </TableRow>
+          </TableHead>
+          <TableBody>
+            {variants.map((variant) => (
+              <TableRow key={variant._id}>
+                <TableCell>{variant.variantName}</TableCell>
+                <TableCell>{variant.description || '-'}</TableCell>
+                <TableCell>
+                  <Chip
+                    label={variant.isAvailable !== false ? 'Available' : 'Unavailable'}
+                    color={variant.isAvailable !== false ? 'success' : 'default'}
+                    size="small"
+                  />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Box>
+  );
+};
 
 const DishList = () => {
   const router = useRouter();
-  
   const [dishes, setDishes] = useState([]);
   const [subCategories, setSubCategories] = useState([]);
   const [selectedSubCategory, setSelectedSubCategory] = useState('');
@@ -61,12 +160,8 @@ const DishList = () => {
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
   const [dishToDelete, setDishToDelete] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
-  const [viewMode, setViewMode] = useState('list'); // 'list' or 'grid'
-  
-  // State for variants expansion
+  const [viewMode, setViewMode] = useState('list');
   const [expandedDish, setExpandedDish] = useState(null);
-  const [dishVariants, setDishVariants] = useState([]);
-  const [loadingVariants, setLoadingVariants] = useState(false);
 
   useEffect(() => {
     fetchSubCategories();
@@ -76,6 +171,10 @@ const DishList = () => {
   useEffect(() => {
     fetchDishes();
   }, [selectedSubCategory]);
+
+  const handleExpandDish = (dishId) => {
+    setExpandedDish(expandedDish === dishId ? null : dishId);
+  };
 
   const fetchSubCategories = async () => {
     try {
@@ -111,12 +210,19 @@ const DishList = () => {
     }
   };
 
-  const handleNavigateToDishForm = (dish = null) => {
-    if (dish) {
-      router.push(`/dashboard/menu/dishes/edit/${dish._id}`);
-    } else {
-      router.push('/dashboard/menu/dishes/new');
-    }
+  const handleOpenForm = (dish = null) => {
+    setSelectedDish(dish);
+    setOpenForm(true);
+  };
+
+  const handleCloseForm = () => {
+    setOpenForm(false);
+    setSelectedDish(null);
+  };
+
+  const handleFormSuccess = () => {
+    fetchDishes();
+    handleCloseForm();
   };
 
   const handleDeleteClick = (dish) => {
@@ -154,35 +260,6 @@ const DishList = () => {
     setSearchTerm(event.target.value);
   };
 
-  // Function to handle expanding a row to show variants
-  const handleExpandDish = async (dishId) => {
-    // If already expanded, collapse it
-    if (expandedDish === dishId) {
-      setExpandedDish(null);
-      return;
-    }
-    
-    // Otherwise, expand and fetch variants
-    setExpandedDish(dishId);
-    setLoadingVariants(true);
-    
-    try {
-      const res = await axiosWithAuth.get(`/api/menu/dishes/${dishId}/variants`);
-      if (res.data.success) {
-        setDishVariants(res.data.data);
-      } else {
-        setDishVariants([]);
-        toast.error('Failed to load variants');
-      }
-    } catch (error) {
-      console.error('Error fetching variants:', error);
-      setDishVariants([]);
-      toast.error('Error loading variants');
-    } finally {
-      setLoadingVariants(false);
-    }
-  };
-
   const filteredDishes = dishes.filter(dish =>
     dish.dishName.toLowerCase().includes(searchTerm.toLowerCase())
   );
@@ -208,7 +285,7 @@ const DishList = () => {
           variant="contained"
           color="primary"
           startIcon={<AddIcon />}
-          onClick={() => handleNavigateToDishForm()}
+          onClick={() => handleOpenForm()}
         >
           Add Dish
         </Button>
@@ -243,7 +320,7 @@ const DishList = () => {
               value={searchTerm}
               onChange={handleSearchChange}
               InputProps={{
-                startAdornment: <InputAdornment position="start"><SearchIcon /></InputAdornment>,
+                startAdornment: <SearchIcon sx={{ color: 'action.active', mr: 1 }} />,
               }}
             />
           </Grid>
@@ -265,7 +342,6 @@ const DishList = () => {
           </Grid>
         </Grid>
       </Box>
-      
       {loading ? (
         <Box display="flex" justifyContent="center" p={4}>
           <CircularProgress />
@@ -350,7 +426,7 @@ const DishList = () => {
                     <TableCell>
                       <IconButton
                         color="primary"
-                        onClick={() => handleNavigateToDishForm(dish)}
+                        onClick={() => handleOpenForm(dish)}
                         size="small"
                       >
                         <EditIcon />
@@ -364,53 +440,15 @@ const DishList = () => {
                       </IconButton>
                     </TableCell>
                   </TableRow>
-                  
-                  {/* Expanded row for variants */}
+                  {/* Expandable Variants Row */}
                   {expandedDish === dish._id && (
                     <TableRow>
                       <TableCell colSpan={5} sx={{ py: 0 }}>
                         <Collapse in={expandedDish === dish._id} timeout="auto" unmountOnExit>
-                          <Box sx={{ py: 2, px: 4 }}>
-                            <Typography variant="subtitle2" gutterBottom component="div">
-                              Variants
-                            </Typography>
-                            {loadingVariants ? (
-                              <Box display="flex" justifyContent="center" p={2}>
-                                <CircularProgress size={24} />
-                              </Box>
-                            ) : dishVariants.length > 0 ? (
-                              <TableContainer component={Paper} variant="outlined">
-                                <Table size="small">
-                                  <TableHead>
-                                    <TableRow>
-                                      <TableCell>Variant Name</TableCell>
-                                      <TableCell>Description</TableCell>
-                                      <TableCell>Status</TableCell>
-                                    </TableRow>
-                                  </TableHead>
-                                  <TableBody>
-                                    {dishVariants.map((variant) => (
-                                      <TableRow key={variant._id}>
-                                        <TableCell>{variant.variantName}</TableCell>
-                                        <TableCell>{variant.description || '-'}</TableCell>
-                                        <TableCell>
-                                          <Chip
-                                            label={variant.isAvailable !== false ? 'Available' : 'Unavailable'}
-                                            color={variant.isAvailable !== false ? 'success' : 'default'}
-                                            size="small"
-                                          />
-                                        </TableCell>
-                                      </TableRow>
-                                    ))}
-                                  </TableBody>
-                                </Table>
-                              </TableContainer>
-                            ) : (
-                              <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                                No variants available for this dish.
-                              </Typography>
-                            )}
-                          </Box>
+                          <ExpandableVariantsRow 
+                            dishId={dish._id} 
+                            isExpanded={expandedDish === dish._id} 
+                          />
                         </Collapse>
                       </TableCell>
                     </TableRow>
@@ -435,17 +473,9 @@ const DishList = () => {
                   }}
                 />
                 <CardContent sx={{ flexGrow: 1 }}>
-                  <Box display="flex" justifyContent="space-between" alignItems="flex-start">
-                    <Typography gutterBottom variant="h6" component="div">
-                      {dish.dishName}
-                    </Typography>
-                    <IconButton
-                      size="small"
-                      onClick={() => handleExpandDish(dish._id)}
-                    >
-                      {expandedDish === dish._id ? <ExpandLess /> : <ExpandMore />}
-                    </IconButton>
-                  </Box>
+                  <Typography gutterBottom variant="h6" component="div">
+                    {dish.dishName}
+                  </Typography>
                   <Box display="flex" mb={1}>
                     <Chip
                       label={dish.dieteryTag}
@@ -479,54 +509,39 @@ const DishList = () => {
                       />
                     ))}
                   </Box>
-                  
-                  {/* Variants collapse section in card view */}
-                  <Collapse in={expandedDish === dish._id} timeout="auto" unmountOnExit>
-                    <Box sx={{ mt: 2, pt: 2, borderTop: '1px solid #eee' }}>
-                      <Typography variant="subtitle2" gutterBottom>
-                        Variants
-                      </Typography>
-                      {loadingVariants ? (
-                        <Box display="flex" justifyContent="center" p={1}>
-                          <CircularProgress size={20} />
-                        </Box>
-                      ) : dishVariants.length > 0 ? (
-                        dishVariants.map((variant) => (
-                          <Box key={variant._id} sx={{ mb: 1 }}>
-                            <Typography variant="body2" fontWeight="medium">
-                              {variant.variantName}
-                              <Chip
-                                label={variant.isAvailable !== false ? 'Available' : 'Unavailable'}
-                                color={variant.isAvailable !== false ? 'success' : 'default'}
-                                size="small"
-                                sx={{ ml: 1 }}
-                              />
-                            </Typography>
-                            {variant.description && (
-                              <Typography variant="caption" color="text.secondary" display="block">
-                                {variant.description}
-                              </Typography>
-                            )}
-                          </Box>
-                        ))
-                      ) : (
-                        <Typography variant="body2" color="text.secondary" sx={{ fontStyle: 'italic' }}>
-                          No variants available.
-                        </Typography>
-                      )}
-                    </Box>
-                  </Collapse>
                 </CardContent>
                 <CardActions>
-                  <Button size="small" onClick={() => handleNavigateToDishForm(dish)}>Edit</Button>
+                  <Button size="small" onClick={() => handleOpenForm(dish)}>Edit</Button>
                   <Button size="small" color="error" onClick={() => handleDeleteClick(dish)}>Delete</Button>
+                  <Button size="small" onClick={() => handleExpandDish(dish._id)}>
+                    {expandedDish === dish._id ? 'Hide Variants' : 'Show Variants'}
+                  </Button>
                 </CardActions>
+                {expandedDish === dish._id && (
+                  <Box p={2}>
+                    <ExpandableVariantsRow dishId={dish._id} isExpanded={true} />
+                  </Box>
+                )}
               </Card>
             </Grid>
           ))}
         </Grid>
       )}
-
+      {/* Dish Form Dialog */}
+      <Dialog
+        open={openForm}
+        onClose={handleCloseForm}
+        maxWidth="lg"
+        fullWidth
+      >
+        <DialogContent>
+          <DishForm
+            dish={selectedDish}
+            onSuccess={handleFormSuccess}
+            onCancel={handleCloseForm}
+          />
+        </DialogContent>
+      </Dialog>
       {/* Delete Confirmation Dialog */}
       <Dialog
         open={openDeleteDialog}
@@ -535,8 +550,8 @@ const DishList = () => {
         <DialogTitle>Confirm Delete</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Are you sure you want to delete the dish &quot;{dishToDelete?.dishName}&quot;? This action
-            cannot be undone.
+            Are you sure you want to delete the dish &quot;{dishToDelete?.dishName}&quot;?
+            This action cannot be undone.
           </DialogContentText>
         </DialogContent>
         <DialogActions>

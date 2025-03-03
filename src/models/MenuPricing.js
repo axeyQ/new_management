@@ -1,4 +1,4 @@
-// src/models/MenuPricing.js
+// src/models/MenuPricing.js - Updated to properly support variants
 import mongoose from 'mongoose';
 
 const MenuPricingSchema = new mongoose.Schema({
@@ -18,6 +18,10 @@ const MenuPricingSchema = new mongoose.Schema({
   },
   taxSlab: {
     type: String,
+    required: true
+  },
+  taxRate: {
+    type: Number,
     required: true
   },
   taxAmount: {
@@ -51,6 +55,10 @@ const MenuPricingSchema = new mongoose.Schema({
     default: Date.now
   }
 });
+
+// Add an index to ensure unique dish+variant combinations
+// This prevents duplicate pricing entries for the same dish+variant
+MenuPricingSchema.index({ dish: 1, variant: 1 }, { unique: true });
 
 const MenuPricing = mongoose.models.MenuPricing || mongoose.model('MenuPricing', MenuPricingSchema);
 export default MenuPricing;

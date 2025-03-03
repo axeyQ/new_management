@@ -40,6 +40,34 @@ export async function verifyAuth(req) {
   }
 }
 
+// Special middleware for routes that need to handle dynamic params safely
+export function variantsMiddleware(handler) {
+  return async (request, context) => {
+    try {
+      // Verify auth similarly to your existing authMiddleware
+      const authResult = await verifyAuth(request);
+      if (!authResult.success) {
+        return NextResponse.json(
+          { success: false, message: authResult.message },
+          { status: 401 }
+        );
+      }
+      
+      // Attach the user to the request
+      request.user = authResult.user;
+      
+      // Pass request and context to the handler
+      return handler(request, context);
+    } catch (error) {
+      console.error('Middleware error:', error);
+      return NextResponse.json(
+        { success: false, message: 'Authentication error' },
+        { status: 500 }
+      );
+    }
+  };
+}
+
 export function authMiddleware(handler) {
   return async (req, ...args) => {
     const authResult = await verifyAuth(req);

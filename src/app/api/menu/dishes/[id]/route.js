@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import Dish from '@/models/Dish';
 import { roleMiddleware } from '@/lib/auth';
+import Variant from '@/models/Variant';
 
 // Get a specific dish
 export const GET = async (request, { params }) => {

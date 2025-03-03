@@ -1,4 +1,4 @@
-// src/app/api/menu/pricing/[id]/route.js
+// src/app/api/menu/pricing/[id]/route.js - Updated to handle variants
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import Menu from '@/models/Menu';
@@ -12,8 +12,9 @@ export const GET = async (request, { params }) => {
     await connectDB();
     
     const pricingItem = await MenuPricing.findById(id)
-      .populate('dish', 'dishName image dieteryTag');
-    
+      .populate('dish', 'dishName image dieteryTag')
+      .populate('variant', 'variantName');
+      
     if (!pricingItem) {
       return NextResponse.json(
         { success: false, message: 'Pricing item not found' },
@@ -55,12 +56,22 @@ const updateHandler = async (request, { params }) => {
     if (price !== undefined) {
       pricingItem.price = price;
       // Recalculate tax and final price
-      const taxAmount = (price * taxRate) / 100;
+      const taxAmount = (price * (taxRate || pricingItem.taxRate)) / 100;
       pricingItem.taxAmount = taxAmount;
       pricingItem.finalPrice = price + taxAmount;
     }
     
     if (taxSlab !== undefined) pricingItem.taxSlab = taxSlab;
+    if (taxRate !== undefined) {
+      pricingItem.taxRate = taxRate;
+      // Recalculate tax amount and final price if price exists
+      if (pricingItem.price) {
+        const taxAmount = (pricingItem.price * taxRate) / 100;
+        pricingItem.taxAmount = taxAmount;
+        pricingItem.finalPrice = pricingItem.price + taxAmount;
+      }
+    }
+    
     if (isAvailable !== undefined) pricingItem.isAvailable = isAvailable;
     
     pricingItem.updatedBy = request.user._id;
@@ -71,8 +82,9 @@ const updateHandler = async (request, { params }) => {
     
     // Return populated pricing item
     const populatedPricing = await MenuPricing.findById(id)
-      .populate('dish', 'dishName image dieteryTag');
-    
+      .populate('dish', 'dishName image dieteryTag')
+      .populate('variant', 'variantName');
+      
     return NextResponse.json({
       success: true,
       message: 'Pricing item updated successfully',

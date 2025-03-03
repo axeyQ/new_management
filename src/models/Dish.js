@@ -12,7 +12,8 @@ const DishSchema = new mongoose.Schema({
   },
   subCategory: [{ 
     type: mongoose.Schema.Types.ObjectId, 
-    ref: 'SubCategory' 
+    ref: 'SubCategory'
+    // Removed required here too
   }],
   description: { 
     type: String 
@@ -38,28 +39,41 @@ const DishSchema = new mongoose.Schema({
   },
   dieteryTag: { 
     type: String, 
-    enum: ['veg', 'non veg', 'egg'],
-    default: 'veg', 
-    required: true 
+    enum: ['veg', 'non veg', 'egg', ''],
+    default: 'veg'
   },
   specialTag: { 
     type: String, 
-    enum: ["Chef's Special", 'Gluten Free', 'Jain', 'Sugar Free', 'Vegan'] 
+    enum: ["Chef's Special", 'Gluten Free', 'Jain', 'Sugar Free', 'Vegan', ''],
+    default: ''
   },
   spiceLevel: { 
     type: String, 
-    enum: ['Low Spicy', 'Very Spicy', 'Medium Spicy'] 
+    enum: ['Low Spicy', 'Very Spicy', 'Medium Spicy', ''],
+    default: ''
   },
   frostType: { 
     type: String, 
-    enum: ['Freshly Frosted', 'Pre Frosted'] 
+    enum: ['Freshly Frosted', 'Pre Frosted', ''],
+    default: ''
   },
-  servingInfo: {
-    portionSize: { type: String },
-    quantity: { type: Number },
-    unit: { type: String, enum: ['grams', 'ml', 'pieces'] },
-    serves: { type: Number }
+servingInfo: {
+  portionSize: { type: String },
+  quantity: { type: Number },
+  // Option 1: Make it validate only when the field has a value
+  unit: { 
+    type: String, 
+    enum: ['grams', 'ml', 'pieces'],
+    // This makes the enum validation only apply when there's a value
+    validate: {
+      validator: function(v) {
+        return v === '' || ['grams', 'ml', 'pieces'].includes(v);
+      },
+      message: props => `${props.value} is not a valid unit!`
+    }
   },
+  serves: { type: Number }
+},
   nutritionPerServingInfo: NutritionInfoSchema,
   allergen: [{ 
     type: String, 
@@ -72,34 +86,37 @@ const DishSchema = new mongoose.Schema({
   packagingCharges: {
     type: { 
       type: String, 
-      enum: ['fixed', 'percentage'], 
-      required: true 
+      enum: ['fixed', 'percentage'],
+      default: 'fixed'
     },
-    amount: { type: Number, required: true },
+    amount: { 
+      type: Number, 
+      default: 0
+    },
     appliedAt: { 
       type: String, 
-      enum: ['dish', 'billing'], 
-      required: true 
+      enum: ['dish', 'billing'],
+      default: 'dish'
     }
   },
   gstItemType: { 
     type: String, 
-    enum: ['goods', 'services'], 
-    required: true 
+    enum: ['goods', 'services'],
+    default: 'goods'
   },
   taxes: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Tax' 
   },
   natureTags: {
-    cuisine: { type: String, required: true },
-    spiciness: { type: String, required: true },
-    sweetnessSaltness: { type: String, required: true },
-    texture: { type: String, required: true },
-    oil: { type: String, required: true },
-    temperature: { type: String, required: true },
-    cookingStyle: { type: String, required: true },
-    other: { type: String }
+    cuisine: { type: String, default: '' },
+    spiciness: { type: String, default: '' },
+    sweetnessSaltness: { type: String, default: '' },
+    texture: { type: String, default: '' },
+    oil: { type: String, default: '' },
+    temperature: { type: String, default: '' },
+    cookingStyle: { type: String, default: '' },
+    other: { type: String, default: '' }
   },
   createdAt: { 
     type: Date, 
@@ -108,17 +125,66 @@ const DishSchema = new mongoose.Schema({
   createdBy: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'User',
-    required: true 
+    default: null
   },
   updatedBy: { 
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'User',
-    required: true 
+    default: null
   },
   updatedAt: { 
     type: Date, 
     default: Date.now 
   }
+});
+
+// Add a pre-save hook to ensure natureTags are properly set
+DishSchema.pre('save', function(next) {
+  // Set default empty strings for all natureTags if they're undefined
+  if (!this.natureTags) {
+    this.natureTags = {
+      cuisine: '',
+      spiciness: '',
+      sweetnessSaltness: '',
+      texture: '',
+      oil: '',
+      temperature: '',
+      cookingStyle: '',
+      other: ''
+    };
+  } else {
+    // Ensure all natureTags fields have at least empty string values
+    this.natureTags.cuisine = this.natureTags.cuisine || '';
+    this.natureTags.spiciness = this.natureTags.spiciness || '';
+    this.natureTags.sweetnessSaltness = this.natureTags.sweetnessSaltness || '';
+    this.natureTags.texture = this.natureTags.texture || '';
+    this.natureTags.oil = this.natureTags.oil || '';
+    this.natureTags.temperature = this.natureTags.temperature || '';
+    this.natureTags.cookingStyle = this.natureTags.cookingStyle || '';
+    this.natureTags.other = this.natureTags.other || '';
+  }
+  
+  // Handle other empty enum fields
+  if (this.specialTag === undefined || this.specialTag === null) this.specialTag = '';
+  if (this.spiceLevel === undefined || this.spiceLevel === null) this.spiceLevel = '';
+  if (this.frostType === undefined || this.frostType === null) this.frostType = '';
+  
+  // Handle servingInfo
+  if (!this.servingInfo) {
+    this.servingInfo = {
+      portionSize: '',
+      quantity: 0,
+      unit: '',
+      serves: 0
+    };
+  } else {
+    // Ensure unit is never null or undefined
+    if (this.servingInfo.unit === null || this.servingInfo.unit === undefined) {
+      this.servingInfo.unit = '';
+    }
+  }
+  
+  next();
 });
 
 const Dish = mongoose.models.Dish || mongoose.model('Dish', DishSchema);
