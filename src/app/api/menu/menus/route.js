@@ -12,11 +12,18 @@ export const GET = async (request) => {
     // Get query parameters
     const url = new URL(request.url);
     const mode = url.searchParams.get('mode');
+    const strictMode = url.searchParams.get('strictMode') === 'true';
     
     // Build query
     let query = {};
     if (mode) {
-      query.orderMode = mode;
+      if (strictMode) {
+        // Only exact matches for this mode
+        query.orderMode = mode;
+      } else {
+        // Also include menus valid for all modes (if you have such a concept)
+        query.orderMode = mode;
+      }
     }
     
     const menus = await Menu.find(query)

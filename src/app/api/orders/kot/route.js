@@ -1,107 +1,71 @@
-// src/app/api/orders/kot/route.js
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import KOT from '@/models/KOT';
 import SalesOrder from '@/models/SalesOrder';
-import { authMiddleware } from '@/lib/auth';
-import { emitKotUpdate } from '@/lib/websocket';
+import { authMiddleware, roleMiddleware } from '@/lib/auth';
 
-// Get all KOTs with filters
+// Get all KOTs with optional filters
 export const GET = authMiddleware(async (request) => {
   try {
     await connectDB();
-    
     // Get query parameters
     const url = new URL(request.url);
-    const orderId = url.searchParams.get('order');
-    const status = url.searchParams.get('status');
     const orderMode = url.searchParams.get('mode');
+    const status = url.searchParams.get('status');
+    const salesOrderId = url.searchParams.get('orderId');
     const limit = parseInt(url.searchParams.get('limit') || '50');
     const page = parseInt(url.searchParams.get('page') || '1');
     
     // Build query based on filters
     let query = {};
-    
-    if (orderId) {
-      query.salesOrder = orderId;
+    if (orderMode) {
+      query.orderMode = orderMode;
     }
-    
     if (status) {
-      const statuses = status.split(',');
-      query.kotStatus = { $in: statuses };
+      query.kotStatus = status;
+    }
+    if (salesOrderId) {
+      query.salesOrder = salesOrderId;
     }
     
     // Calculate pagination
     const skip = (page - 1) * limit;
     
     // Fetch KOTs with pagination
-    let kotsQuery = KOT.find(query)
+    const kots = await KOT.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit)
       .populate('table')
+      .populate('salesOrder')
       .populate({
         path: 'items.dish',
-        select: 'dishName dieteryTag'
+        select: 'dishName'
       })
       .populate({
         path: 'items.variant',
         select: 'variantName'
       })
-      .populate('createdBy', 'username')
-      .populate('printedBy', 'username');
+      .populate({
+        path: 'items.addOns.addOn',
+        select: 'name'
+      })
+      .populate({
+        path: 'createdBy',
+        select: 'username'
+      });
     
-    // If filtering by order mode, we need to handle this separately
-    // since it's in the salesOrder document
-    if (orderMode) {
-      // First, get all KOTs
-      const allKots = await kotsQuery.exec();
-      
-      // Then populate the sales order to check the order mode
-      await SalesOrder.populate(allKots, {
-        path: 'salesOrder',
-        select: 'orderMode'
-      });
-      
-      // Filter KOTs by order mode
-      const filteredKots = allKots.filter(kot => 
-        kot.salesOrder && kot.salesOrder.orderMode === orderMode
-      );
-      
-      // Calculate total for pagination
-      const total = filteredKots.length;
-      
-      // Return the filtered KOTs
-      return NextResponse.json({
-        success: true,
-        count: filteredKots.length,
-        total,
-        page,
-        totalPages: Math.ceil(total / limit),
-        data: filteredKots
-      });
-    } else {
-      // If not filtering by order mode, execute the query normally
-      const kots = await kotsQuery.exec();
-      
-      // Populate sales order for all KOTs to include order mode in response
-      await SalesOrder.populate(kots, {
-        path: 'salesOrder',
-        select: 'orderMode'
-      });
-      
-      // Get total count for pagination
-      const total = await KOT.countDocuments(query);
-      
-      return NextResponse.json({
-        success: true,
-        count: kots.length,
-        total,
-        page,
-        totalPages: Math.ceil(total / limit),
-        data: kots
-      });
-    }
+    // Get total count for pagination
+    const total = await KOT.countDocuments(query);
+    
+    return NextResponse.json({
+      success: true,
+      count: kots.length,
+      total,
+      page,
+      totalPages: Math.ceil(total / limit),
+      data: kots
+    });
   } catch (error) {
     console.error('Error fetching KOTs:', error);
     return NextResponse.json(
@@ -112,7 +76,7 @@ export const GET = authMiddleware(async (request) => {
 });
 
 // Create a new KOT
-export const POST = authMiddleware(async (request) => {
+const createHandler = async (request) => {
   try {
     await connectDB();
     const kotData = await request.json();
@@ -125,37 +89,51 @@ export const POST = authMiddleware(async (request) => {
       );
     }
     
-    // Get order information
-    const order = await SalesOrder.findById(kotData.salesOrder);
-    if (!order) {
+    // Check if the sales order exists
+    const salesOrder = await SalesOrder.findById(kotData.salesOrder);
+    if (!salesOrder) {
       return NextResponse.json(
-        { success: false, message: 'Order not found' },
+        { success: false, message: 'Sales order not found' },
         { status: 404 }
       );
     }
     
-    // Add additional order information to KOT
-    kotData.invoiceNum = order.invoiceNumber;
-    kotData.orderMode = order.orderMode;
+    // Add order details to KOT
+    kotData.orderMode = salesOrder.orderMode;
+    kotData.invoiceNum = salesOrder.invoiceNumber;
+    kotData.refNum = salesOrder.refNum;
+    kotData.table = salesOrder.table;
     kotData.customer = {
-      name: order.customer.name,
-      phone: order.customer.phone
+      name: salesOrder.customer.name,
+      phone: salesOrder.customer.phone
     };
     
-    if (order.table) {
-      kotData.table = order.table;
-    }
+    // Process items to ensure they have all required fields
+    kotData.items = kotData.items.map(item => ({
+      dish: item.dish,
+      dishName: item.dishName || 'Unknown Item',
+      variant: item.variant || null,
+      variantName: item.variantName || '',
+      quantity: item.quantity,
+      // Ensure add-ons are properly formatted
+      addOns: (item.addOns || []).map(addon => ({
+        addOn: addon.addOn,
+        addOnName: addon.name || addon.addOnName || 'Add-on'
+      })),
+      notes: item.notes || ''
+    }));
     
-    // Add user info
+    // Add user info for tracking
     kotData.createdBy = request.user._id;
     kotData.updatedBy = request.user._id;
     
     // Create the KOT
     const newKOT = await KOT.create(kotData);
     
-    // Populate fields for response
+    // Populate necessary fields for response
     const populatedKOT = await KOT.findById(newKOT._id)
       .populate('table')
+      .populate('salesOrder')
       .populate({
         path: 'items.dish',
         select: 'dishName'
@@ -164,10 +142,14 @@ export const POST = authMiddleware(async (request) => {
         path: 'items.variant',
         select: 'variantName'
       })
-      .populate('createdBy', 'username');
-    
-    // Emit real-time update via WebSocket
-    emitKotUpdate(populatedKOT);
+      .populate({
+        path: 'items.addOns.addOn',
+        select: 'name'
+      })
+      .populate({
+        path: 'createdBy',
+        select: 'username'
+      });
     
     return NextResponse.json({
       success: true,
@@ -181,4 +163,7 @@ export const POST = authMiddleware(async (request) => {
       { status: 500 }
     );
   }
-});
+};
+
+// Only authenticated users can create KOTs
+export const POST = authMiddleware(createHandler);

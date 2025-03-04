@@ -1,16 +1,21 @@
-// src/models/MenuPricing.js - Updated to properly support variants
 import mongoose from 'mongoose';
-
+// Create a simple schema without complex indexes
 const MenuPricingSchema = new mongoose.Schema({
+  menu: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Menu',
+    required: true
+  },
   dish: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Dish',
     required: true
   },
+  // Make variant optional
   variant: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Variant',
-    default: null
+    required: false
   },
   price: {
     type: Number,
@@ -42,23 +47,23 @@ const MenuPricingSchema = new mongoose.Schema({
   },
   createdBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    ref: 'User'
   },
   updatedBy: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true
+    ref: 'User'
   },
   updatedAt: {
     type: Date,
     default: Date.now
   }
+}, {
+  // Set this option to make Mongoose handle duplicate keys better
+  collation: { locale: 'en', strength: 2 }
 });
 
-// Add an index to ensure unique dish+variant combinations
-// This prevents duplicate pricing entries for the same dish+variant
-MenuPricingSchema.index({ dish: 1, variant: 1 }, { unique: true });
+// Add proper compound index that includes menu + dish + variant
+MenuPricingSchema.index({ menu: 1, dish: 1, variant: 1 }, { unique: true });
 
 const MenuPricing = mongoose.models.MenuPricing || mongoose.model('MenuPricing', MenuPricingSchema);
 export default MenuPricing;

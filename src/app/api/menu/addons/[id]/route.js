@@ -1,8 +1,9 @@
-// src/app/api/menu/addons/[id]/route.js
+// src/app/api/menu/addons/[id]/route.js - Updated to handle variant references
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import AddOn from '@/models/AddOn';
-import AddOnGroup from '@/models/AddOnGroup';
+import Dish from '@/models/Dish';
+import Variant from '@/models/Variant';
 import { roleMiddleware } from '@/lib/auth';
 
 // Get a specific addon
@@ -12,9 +13,9 @@ export const GET = async (request, { params }) => {
     await connectDB();
     
     const addon = await AddOn.findById(id)
-      .populate('availabilityStatus')
-      .populate('dishReference');
-    
+      .populate('dishReference', 'dishName image dieteryTag')
+      .populate('variantReference', 'variantName');
+      
     if (!addon) {
       return NextResponse.json(
         { success: false, message: 'Add-on not found' },
@@ -39,7 +40,14 @@ export const GET = async (request, { params }) => {
 const updateHandler = async (request, { params }) => {
   try {
     const { id } = params;
-    const { name, price, addonGroupId, availabilityStatus, dishReference } = await request.json();
+    const { name, price, availabilityStatus, dishReference, variantReference } = await request.json();
+    
+    if (!name) {
+      return NextResponse.json(
+        { success: false, message: 'Add-on name is required' },
+        { status: 400 }
+      );
+    }
     
     await connectDB();
     
@@ -52,45 +60,64 @@ const updateHandler = async (request, { params }) => {
       );
     }
     
-    // Update fields
-    if (name) addon.name = name;
-    if (price !== undefined) addon.price = price;
-    if (availabilityStatus !== undefined) addon.availabilityStatus = availabilityStatus;
-    if (dishReference !== undefined) addon.dishReference = dishReference || null;
-    
-    // Save updated addon
-    await addon.save();
-    
-    // Handle group change if needed
-    if (addonGroupId) {
-      // Find all groups that have this addon
-      const groups = await AddOnGroup.find({ addOns: id });
-      
-      // If the addon is already in the requested group, no need to change
-      const alreadyInRequestedGroup = groups.some(g => g._id.toString() === addonGroupId);
-      
-      if (!alreadyInRequestedGroup) {
-        // Remove from current groups
-        for (const group of groups) {
-          group.addOns = group.addOns.filter(
-            addonId => addonId.toString() !== id
+    // If changing dish/variant references, validate them
+    if ((dishReference && dishReference !== addon.dishReference?.toString()) || 
+        (variantReference && variantReference !== addon.variantReference?.toString())) {
+          
+      // Check if dish exists
+      if (dishReference) {
+        const dish = await Dish.findById(dishReference);
+        if (!dish) {
+          return NextResponse.json(
+            { success: false, message: 'Referenced dish not found' },
+            { status: 404 }
           );
-          await group.save();
         }
         
-        // Add to new group
-        const newGroup = await AddOnGroup.findById(addonGroupId);
-        if (newGroup) {
-          newGroup.addOns.push(id);
-          await newGroup.save();
+        // If variant is specified, verify it exists and belongs to this dish
+        if (variantReference) {
+          const variant = await Variant.findById(variantReference);
+          if (!variant) {
+            return NextResponse.json(
+              { success: false, message: 'Referenced variant not found' },
+              { status: 404 }
+            );
+          }
+          
+          // Verify the variant belongs to the dish
+          const variantBelongsToDish = dish.variations && dish.variations.some(
+            v => v.toString() === variantReference.toString()
+          );
+          
+          if (!variantBelongsToDish) {
+            return NextResponse.json(
+              { success: false, message: 'Variant does not belong to the selected dish' },
+              { status: 400 }
+            );
+          }
         }
       }
     }
     
+    // Update fields
+    addon.name = name;
+    if (price !== undefined) addon.price = price;
+    if (availabilityStatus !== undefined) addon.availabilityStatus = availabilityStatus;
+    if (dishReference !== undefined) addon.dishReference = dishReference || null;
+    if (variantReference !== undefined) addon.variantReference = variantReference || null;
+    
+    // Save updated addon
+    await addon.save();
+    
+    // Return populated addon
+    const updatedAddon = await AddOn.findById(id)
+      .populate('dishReference', 'dishName image dieteryTag')
+      .populate('variantReference', 'variantName');
+      
     return NextResponse.json({
       success: true,
       message: 'Add-on updated successfully',
-      data: addon
+      data: updatedAddon
     });
   } catch (error) {
     console.error('Error updating addon:', error);
@@ -115,13 +142,13 @@ const deleteHandler = async (request, { params }) => {
       );
     }
     
-    // Remove addon from any groups
+    // Remove add-on from any groups that reference it
     await AddOnGroup.updateMany(
       { addOns: id },
       { $pull: { addOns: id } }
     );
     
-    // Delete the addon
+    // Delete the add-on
     await AddOn.findByIdAndDelete(id);
     
     return NextResponse.json({
@@ -136,6 +163,9 @@ const deleteHandler = async (request, { params }) => {
     );
   }
 };
+
+// Make sure to import the model
+import AddOnGroup from '@/models/AddOnGroup';
 
 // Only admins and billers can update or delete addons
 export const PUT = roleMiddleware(['admin', 'biller'])(updateHandler);

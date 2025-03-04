@@ -1,13 +1,11 @@
-// src/app/api/menu/pricing/route.js - Updated to handle variants
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import Menu from '@/models/Menu';
-import MenuPricing from '@/models/MenuPricing';
 import Dish from '@/models/Dish';
 import Variant from '@/models/Variant';
 import { roleMiddleware } from '@/lib/auth';
+import mongoose from 'mongoose';
 
-// Get menu pricing
 export const GET = async (request) => {
   try {
     await connectDB();
@@ -23,46 +21,87 @@ export const GET = async (request) => {
       );
     }
     
+    // Build the query directly for the MongoDB collection
+    const db = mongoose.connection.db;
+    const collection = db.collection('menupricings');
+    
+    // Create a basic query
     let query = {};
-    if (menuId) {
-      const menu = await Menu.findById(menuId);
-      if (!menu) {
-        return NextResponse.json(
-          { success: false, message: 'Menu not found' },
-          { status: 404 }
-        );
-      }
-      query = { _id: { $in: menu.dishPricing } };
-    }
-    
-    if (dishId) {
-      query.dish = dishId;
-    }
-    
+    if (menuId) query.menu = new mongoose.Types.ObjectId(menuId);
+    if (dishId) query.dish = new mongoose.Types.ObjectId(dishId);
     if (variantId) {
-      query.variant = variantId;
+      query.variant = new mongoose.Types.ObjectId(variantId);
+    } else if (dishId && variantId === '') {
+      query.variant = { $exists: false };
     }
     
-    const pricingItems = await MenuPricing.find(query)
-      .populate('dish', 'dishName image dieteryTag')
-      .populate('variant', 'variantName')
-      .sort({ 'dish.dishName': 1 });
+    // Get the documents and manually populate them
+    const pricingItems = await collection.find(query).toArray();
+    
+    // If we have results, enrich them with dish and variant data
+    if (pricingItems.length > 0) {
+      const dishIds = [...new Set(pricingItems.map(item => item.dish))];
+      const variantIds = [...new Set(pricingItems.filter(item => item.variant).map(item => item.variant))];
       
+      // Get all dishes in one query
+      const dishes = await Dish.find({ _id: { $in: dishIds } }).lean();
+      const dishMap = dishes.reduce((map, dish) => {
+        map[dish._id.toString()] = dish;
+        return map;
+      }, {});
+      
+      // Get all variants in one query
+      const variants = await Variant.find({ _id: { $in: variantIds } }).lean();
+      const variantMap = variants.reduce((map, variant) => {
+        map[variant._id.toString()] = variant;
+        return map;
+      }, {});
+      
+      // Enrich the pricing items
+      const enrichedItems = pricingItems.map(item => {
+        const dishId = item.dish.toString();
+        const dish = dishMap[dishId];
+        let variant = null;
+        if (item.variant) {
+          const variantId = item.variant.toString();
+          variant = variantMap[variantId];
+        }
+        return {
+          ...item,
+          dish: dish ? {
+            _id: dish._id,
+            dishName: dish.dishName,
+            image: dish.image,
+            dieteryTag: dish.dieteryTag
+          } : { _id: item.dish },
+          variant: variant ? {
+            _id: variant._id,
+            variantName: variant.variantName
+          } : null
+        };
+      });
+      
+      return NextResponse.json({
+        success: true,
+        count: enrichedItems.length,
+        data: enrichedItems
+      });
+    }
+    
     return NextResponse.json({
       success: true,
-      count: pricingItems.length,
-      data: pricingItems
+      count: 0,
+      data: []
     });
   } catch (error) {
     console.error('Error fetching menu pricing:', error);
     return NextResponse.json(
-      { success: false, message: 'Server error' },
+      { success: false, message: 'Server error: ' + error.message },
       { status: 500 }
     );
   }
 };
 
-// Add or update menu pricing
 const createHandler = async (request) => {
   try {
     const { menuId, dishId, variantId, price, taxSlab, taxRate, isAvailable } = await request.json();
@@ -94,9 +133,8 @@ const createHandler = async (request) => {
     }
     
     // Verify variant if provided
-    let variant = null;
     if (variantId) {
-      variant = await Variant.findById(variantId);
+      const variant = await Variant.findById(variantId);
       if (!variant) {
         return NextResponse.json(
           { success: false, message: 'Variant not found' },
@@ -108,7 +146,6 @@ const createHandler = async (request) => {
       const variantBelongsToDish = dish.variations && dish.variations.some(
         v => v.toString() === variantId.toString()
       );
-      
       if (!variantBelongsToDish) {
         return NextResponse.json(
           { success: false, message: 'Variant does not belong to the selected dish' },
@@ -121,75 +158,71 @@ const createHandler = async (request) => {
     const taxAmount = (price * taxRate) / 100;
     const finalPrice = price + taxAmount;
     
-    // Check if pricing already exists for this dish/variant in this menu
-    let pricingExists = false;
-    let existingPricing = null;
+    // Get direct access to the MongoDB collection
+    const db = mongoose.connection.db;
+    const collection = db.collection('menupricings');
     
-    if (menu.dishPricing && menu.dishPricing.length > 0) {
-      // Query needs to match both dish and variant (or lack of variant)
-      const query = { 
-        _id: { $in: menu.dishPricing },
-        dish: dishId
-      };
-      
-      if (variantId) {
-        query.variant = variantId;
-      } else {
-        // If no variant specified, we need to find entries with null/undefined variant
-        query.variant = { $exists: false };
-      }
-      
-      existingPricing = await MenuPricing.findOne(query);
-      
-      if (existingPricing) {
-        pricingExists = true;
-      }
-    }
+    // Create a query to find an existing pricing entry
+    const query = {
+      menu: new mongoose.Types.ObjectId(menuId),
+      dish: new mongoose.Types.ObjectId(dishId)
+    };
     
-    let pricingItem;
-    
-    if (pricingExists) {
-      // Update existing pricing
-      existingPricing.price = price;
-      existingPricing.taxSlab = taxSlab;
-      existingPricing.taxAmount = taxAmount;
-      existingPricing.finalPrice = finalPrice;
-      existingPricing.isAvailable = isAvailable !== undefined ? isAvailable : true;
-      existingPricing.updatedBy = request.user._id;
-      existingPricing.updatedAt = Date.now();
-      
-      pricingItem = await existingPricing.save();
+    if (variantId) {
+      query.variant = new mongoose.Types.ObjectId(variantId);
     } else {
-      // Create new pricing
-      pricingItem = await MenuPricing.create({
-        dish: dishId,
-        variant: variantId || null, // Only include variant if provided
-        price,
-        taxSlab,
-        taxRate,
-        taxAmount,
-        finalPrice,
-        isAvailable: isAvailable !== undefined ? isAvailable : true,
-        createdBy: request.user._id,
-        updatedBy: request.user._id
-      });
-      
-      // Add to menu if not already there
-      if (!menu.dishPricing.includes(pricingItem._id)) {
-        menu.dishPricing.push(pricingItem._id);
-        await menu.save();
-      }
+      // We need to be explicit about checking for records where variant is not present
+      query.variant = { $exists: false };
     }
     
-    // Return populated pricing item
-    const populatedPricing = await MenuPricing.findById(pricingItem._id)
-      .populate('dish', 'dishName image dieteryTag')
-      .populate('variant', 'variantName');
-      
+    // Check if a document already exists
+    const now = new Date();
+    const userId = request.user?._id ? new mongoose.Types.ObjectId(request.user._id) : null;
+    
+    // MODIFIED: Instead of separate insert/update, use findOneAndUpdate with upsert
+    const result = await collection.findOneAndUpdate(
+      query,
+      {
+        $set: {
+          menu: new mongoose.Types.ObjectId(menuId),
+          dish: new mongoose.Types.ObjectId(dishId),
+          price,
+          taxSlab,
+          taxRate,
+          taxAmount,
+          finalPrice,
+          isAvailable: isAvailable !== undefined ? isAvailable : true,
+          updatedAt: now,
+          updatedBy: userId
+        },
+        $setOnInsert: {
+          createdAt: now,
+          createdBy: userId
+        }
+      },
+      { 
+        upsert: true,
+        returnDocument: 'after'
+      }
+    );
+    
+    // Check which operation was performed
+    const wasInserted = !!result.upsertedId;
+    
+    // If this was a new document, add it to the menu's dishPricing array
+    if (wasInserted) {
+      const insertedId = result.upsertedId;
+      await Menu.findByIdAndUpdate(
+        menuId,
+        { $addToSet: { dishPricing: insertedId } }
+      );
+    }
+    
+    // Return the document (whether it was newly inserted or updated)
     return NextResponse.json({
       success: true,
-      message: pricingExists ? 'Menu pricing updated successfully' : 'Menu pricing added successfully',
-      data: populatedPricing
+      message: wasInserted ? 'Menu pricing added successfully' : 'Menu pricing updated successfully',
+      data: result.value
     });
   } catch (error) {
     console.error('Error managing menu pricing:', error);

@@ -1,4 +1,3 @@
-// src/components/menu/AddOnList.js - Updated to display custom add-ons
 import { useState, useEffect } from 'react';
 import {
   Paper,
@@ -17,46 +16,62 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  Chip,
+  TextField,
+  InputAdornment,
+  Divider,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  Chip,
-  TextField,
-  InputAdornment,
-  Tooltip,
+  CircularProgress,
+  Alert,
 } from '@mui/material';
 import {
   Edit as EditIcon,
   Delete as DeleteIcon,
   Add as AddIcon,
   Search as SearchIcon,
-  Restaurant as DishIcon,
-  Create as CreateIcon,
+  AttachMoney as PriceIcon,
 } from '@mui/icons-material';
 import axiosWithAuth from '@/lib/axiosWithAuth';
 import toast from 'react-hot-toast';
-import AddOnForm from './AddOnForm';
+import MenuAddonPricingForm from './MenuAddonPricingForm';
 
-const AddOnList = () => {
-  const [addons, setAddons] = useState([]);
+const MenuAddonsList = ({ menuId, menuName }) => {
+  const [addonPricings, setAddonPricings] = useState([]);
   const [addonGroups, setAddonGroups] = useState([]);
   const [selectedGroup, setSelectedGroup] = useState('');
   const [loading, setLoading] = useState(true);
   const [openForm, setOpenForm] = useState(false);
-  const [selectedAddon, setSelectedAddon] = useState(null);
+  const [selectedPricing, setSelectedPricing] = useState(null);
   const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
-  const [addonToDelete, setAddonToDelete] = useState(null);
+  const [pricingToDelete, setPricingToDelete] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
+  const [menu, setMenu] = useState(null);
+  const [isZomatoMenu, setIsZomatoMenu] = useState(false);
 
   useEffect(() => {
+    fetchMenuDetails();
     fetchAddonGroups();
-    fetchAddons();
-  }, []);
+    fetchAddonPricings();
+  }, [menuId]);
 
   useEffect(() => {
-    fetchAddons();
+    fetchAddonPricings();
   }, [selectedGroup]);
+
+  const fetchMenuDetails = async () => {
+    try {
+      const res = await axiosWithAuth.get(`/api/menu/menus/${menuId}`);
+      if (res.data.success) {
+        setMenu(res.data.data);
+        setIsZomatoMenu(res.data.data.orderMode === 'Zomato');
+      }
+    } catch (error) {
+      console.error('Error fetching menu details:', error);
+    }
+  };
 
   const fetchAddonGroups = async () => {
     try {
@@ -72,84 +87,61 @@ const AddOnList = () => {
     }
   };
 
-  const fetchAddons = async () => {
+  const fetchAddonPricings = async () => {
     setLoading(true);
     try {
-      const url = selectedGroup
-        ? `/api/menu/addons?group=${selectedGroup}`
-        : '/api/menu/addons';
+      const url = `/api/menu/addon-pricing?menu=${menuId}${selectedGroup ? `&group=${selectedGroup}` : ''}`;
       const res = await axiosWithAuth.get(url);
       if (res.data.success) {
-        // Process addons to add group information directly
-        const processedAddons = res.data.data.map(addon => {
-          // Find which group this addon belongs to and add it to the addon object
-          for (const group of addonGroups) {
-            if (group.addOns && group.addOns.some(id => 
-              String(id) === String(addon._id) || 
-              (id._id && String(id._id) === String(addon._id))
-            )) {
-              return {
-                ...addon,
-                groupName: group.name,  // Add group name directly to addon object
-                groupId: group._id      // Add group ID directly to addon object
-              };
-            }
-          }
-          return addon;
-        });
-        
-        setAddons(processedAddons);
+        setAddonPricings(res.data.data);
       } else {
-        toast.error(res.data.message || 'Failed to fetch add-ons');
+        toast.error(res.data.message || 'Failed to fetch add-on pricings');
       }
     } catch (error) {
-      console.error('Error fetching add-ons:', error);
-      toast.error('Error loading add-ons');
+      console.error('Error fetching add-on pricings:', error);
+      toast.error('Error loading add-on pricings');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleOpenForm = (addon = null) => {
-    setSelectedAddon(addon);
+  const handleOpenForm = (pricing = null) => {
+    setSelectedPricing(pricing);
     setOpenForm(true);
   };
 
   const handleCloseForm = () => {
     setOpenForm(false);
-    setSelectedAddon(null);
+    setSelectedPricing(null);
   };
 
-  const handleFormSuccess = async (newAddon) => {
-    // First fetch the addon groups to make sure we have the latest data
-    await fetchAddonGroups();
-    // Then fetch the add-ons
-    await fetchAddons();
+  const handleFormSuccess = () => {
+    fetchAddonPricings();
     handleCloseForm();
   };
 
-  const handleDeleteClick = (addon) => {
-    setAddonToDelete(addon);
+  const handleDeleteClick = (pricing) => {
+    setPricingToDelete(pricing);
     setOpenDeleteDialog(true);
   };
 
   const handleCloseDeleteDialog = () => {
     setOpenDeleteDialog(false);
-    setAddonToDelete(null);
+    setPricingToDelete(null);
   };
 
   const handleDeleteConfirm = async () => {
     try {
-      const res = await axiosWithAuth.delete(`/api/menu/addons/${addonToDelete._id}`);
+      const res = await axiosWithAuth.delete(`/api/menu/addon-pricing/${pricingToDelete._id}`);
       if (res.data.success) {
-        toast.success('Add-on deleted successfully');
-        fetchAddons();
+        toast.success('Add-on pricing removed successfully');
+        fetchAddonPricings();
       } else {
-        toast.error(res.data.message || 'Failed to delete add-on');
+        toast.error(res.data.message || 'Failed to remove add-on pricing');
       }
     } catch (error) {
-      console.error('Error deleting add-on:', error);
-      toast.error(error.response?.data?.message || 'Error deleting add-on');
+      console.error('Error removing add-on pricing:', error);
+      toast.error(error.response?.data?.message || 'Error removing add-on pricing');
     } finally {
       handleCloseDeleteDialog();
     }
@@ -163,45 +155,51 @@ const AddOnList = () => {
     setSearchTerm(e.target.value);
   };
 
-  // Filter addons by search term
-  const filteredAddons = addons.filter(addon =>
-    addon.name.toLowerCase().includes(searchTerm.toLowerCase())
-  );
-
-  // Find group name for an addon - improved with better checking
+  // Find group name for an addon
   const findAddonGroup = (addonId) => {
-    if (!addonGroups || addonGroups.length === 0) return '-';
-    
     for (const group of addonGroups) {
-      if (!group.addOns) continue;
-      
-      // Handle both array of strings and array of objects
-      const addOnIds = group.addOns.map(addon => 
-        typeof addon === 'string' ? addon : 
-        addon._id ? String(addon._id) : null
-      ).filter(id => id !== null);
-      
-      if (addOnIds.includes(String(addonId))) {
+      if (group.addOns && group.addOns.some(id =>
+        String(id) === String(addonId) ||
+        (id._id && String(id._id) === String(addonId))
+      )) {
         return group.name;
       }
     }
     return '-';
   };
 
+  // Filter addons by search term
+  const filteredPricings = addonPricings.filter(pricing =>
+    pricing.addon.name.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  // If not a Zomato menu, display a message and return
+  if (!isZomatoMenu) {
+    return (
+      <Box sx={{ p: 3 }}>
+        <Alert severity="info" sx={{ mb: 2 }}>
+          Add-ons are only available for Zomato ordering mode. This menu is configured for {menu?.orderMode || 'another'} mode.
+        </Alert>
+        <Typography variant="body1">
+          To use add-ons, please create a Zomato menu or switch to an existing Zomato menu.
+        </Typography>
+      </Box>
+    );
+  }
+
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h5">Add-ons</Typography>
+        <Typography variant="h5">Add-ons for Menu: {menuName}</Typography>
         <Button
           variant="contained"
           color="primary"
           startIcon={<AddIcon />}
           onClick={() => handleOpenForm()}
         >
-          Add New Add-on
+          Add Add-on to Menu
         </Button>
       </Box>
-
       <Box mb={3} display="flex" gap={2}>
         <FormControl sx={{ minWidth: 200 }}>
           <InputLabel id="group-filter-label">Filter by Group</InputLabel>
@@ -221,7 +219,6 @@ const AddOnList = () => {
             ))}
           </Select>
         </FormControl>
-
         <TextField
           placeholder="Search add-ons..."
           value={searchTerm}
@@ -236,16 +233,16 @@ const AddOnList = () => {
           }}
         />
       </Box>
-
       <TableContainer component={Paper}>
         <Table>
           <TableHead>
             <TableRow>
-              <TableCell>Name</TableCell>
-              <TableCell>Price</TableCell>
+              <TableCell>Add-on Name</TableCell>
               <TableCell>Group</TableCell>
-              <TableCell>Type</TableCell>
               <TableCell>Related To</TableCell>
+              <TableCell>Base Price</TableCell>
+              <TableCell>Tax</TableCell>
+              <TableCell>Final Price</TableCell>
               <TableCell>Status</TableCell>
               <TableCell width="150">Actions</TableCell>
             </TableRow>
@@ -253,49 +250,29 @@ const AddOnList = () => {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} align="center">Loading...</TableCell>
+                <TableCell colSpan={8} align="center">
+                  <CircularProgress size={24} sx={{ my: 2 }} />
+                </TableCell>
               </TableRow>
-            ) : filteredAddons.length === 0 ? (
+            ) : filteredPricings.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} align="center">No add-ons found</TableCell>
+                <TableCell colSpan={8} align="center">
+                  No add-on pricings found for this menu
+                </TableCell>
               </TableRow>
-            ) : filteredAddons.map((addon) => (
-              <TableRow key={addon._id}>
-                <TableCell>{addon.name}</TableCell>
-                <TableCell>₹{addon.price?.toFixed(2) || '0.00'}</TableCell>
+            ) : filteredPricings.map((pricing) => (
+              <TableRow key={pricing._id}>
+                <TableCell>{pricing.addon.name}</TableCell>
+                <TableCell>{findAddonGroup(pricing.addon._id)}</TableCell>
                 <TableCell>
-                  {addon.groupName || findAddonGroup(addon._id) || '-'}
-                </TableCell>
-                <TableCell>
-                  {addon.dishReference ? (
-                    <Tooltip title="Based on a dish">
-                      <Chip 
-                        icon={<DishIcon fontSize="small" />} 
-                        label="Dish-based" 
-                        size="small" 
-                        color="info"
-                      />
-                    </Tooltip>
-                  ) : (
-                    <Tooltip title="Custom add-on">
-                      <Chip 
-                        icon={<CreateIcon fontSize="small" />} 
-                        label="Custom" 
-                        size="small" 
-                        color="secondary"
-                      />
-                    </Tooltip>
-                  )}
-                </TableCell>
-                <TableCell>
-                  {addon.dishReference ? (
+                  {pricing.addon.dishReference ? (
                     <Box>
                       <Typography variant="body2">
-                        {addon.dishReference.dishName || 'Unknown Dish'}
+                        {pricing.addon.dishReference.dishName || 'Unknown Dish'}
                       </Typography>
-                      {addon.variantReference && (
+                      {pricing.addon.variantReference && (
                         <Chip
-                          label={`Variant: ${addon.variantReference.variantName || 'Unknown'}`}
+                          label={`Variant: ${pricing.addon.variantReference.variantName || 'Unknown'}`}
                           size="small"
                           color="primary"
                           variant="outlined"
@@ -303,31 +280,36 @@ const AddOnList = () => {
                         />
                       )}
                     </Box>
-                  ) : (
-                    <Typography variant="body2" color="text.secondary">
-                      N/A
-                    </Typography>
-                  )}
+                  ) : '-'}
                 </TableCell>
+                <TableCell>₹{pricing.price.toFixed(2)}</TableCell>
+                <TableCell>
+                  <Typography variant="body2">
+                    {pricing.taxSlab} (₹{pricing.taxAmount.toFixed(2)})
+                  </Typography>
+                </TableCell>
+                <TableCell>₹{pricing.finalPrice.toFixed(2)}</TableCell>
                 <TableCell>
                   <Chip
-                    label={addon.availabilityStatus ? "Available" : "Unavailable"}
-                    color={addon.availabilityStatus ? "success" : "default"}
+                    label={pricing.isAvailable ? "Available" : "Unavailable"}
+                    color={pricing.isAvailable ? "success" : "default"}
                     size="small"
                   />
                 </TableCell>
                 <TableCell>
                   <IconButton
                     color="primary"
-                    onClick={() => handleOpenForm(addon)}
+                    onClick={() => handleOpenForm(pricing)}
                     size="small"
+                    title="Edit Pricing"
                   >
-                    <EditIcon />
+                    <PriceIcon />
                   </IconButton>
                   <IconButton
                     color="error"
-                    onClick={() => handleDeleteClick(addon)}
+                    onClick={() => handleDeleteClick(pricing)}
                     size="small"
+                    title="Remove from Menu"
                   >
                     <DeleteIcon />
                   </IconButton>
@@ -337,7 +319,7 @@ const AddOnList = () => {
           </TableBody>
         </Table>
       </TableContainer>
-
+      
       {/* Form Dialog */}
       <Dialog
         open={openForm}
@@ -346,25 +328,25 @@ const AddOnList = () => {
         fullWidth
       >
         <DialogContent>
-          <AddOnForm
-            addon={selectedAddon}
-            addonGroups={addonGroups}
+          <MenuAddonPricingForm
+            menuId={menuId}
+            pricingItem={selectedPricing}
             onSuccess={handleFormSuccess}
             onCancel={handleCloseForm}
           />
         </DialogContent>
       </Dialog>
-
+      
       {/* Delete Confirmation Dialog */}
       <Dialog
         open={openDeleteDialog}
         onClose={handleCloseDeleteDialog}
       >
-        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogTitle>Confirm Remove</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            Are you sure you want to delete the add-on &quot;{addonToDelete?.name}&quot;?
-            This action cannot be undone.
+            Are you sure you want to remove &quot;{pricingToDelete?.addon?.name}&quot; from this menu?
+            This will not delete the add-on itself, only remove its pricing from this menu.
           </DialogContentText>
         </DialogContent>
         <DialogActions>
@@ -372,7 +354,7 @@ const AddOnList = () => {
             Cancel
           </Button>
           <Button onClick={handleDeleteConfirm} color="error">
-            Delete
+            Remove
           </Button>
         </DialogActions>
       </Dialog>
@@ -380,4 +362,4 @@ const AddOnList = () => {
   );
 };
 
-export default AddOnList;
+export default MenuAddonsList;

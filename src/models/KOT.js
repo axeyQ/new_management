@@ -42,52 +42,40 @@ const KOTSchema = new mongoose.Schema({
     name: { type: String, required: true },
     phone: { type: String, required: true }
   },
-  items: [{
-    dish: {
+items: [{
+  dish: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Dish',
+    required: true
+  },
+  dishName: {
+    type: String,
+    required: true
+  },
+  variant: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Variant'
+  },
+  variantName: {
+    type: String
+  },
+  quantity: {
+    type: Number,
+    required: true
+  },
+  addOns: [{
+    addOn: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'Dish',
-      required: true
+      ref: 'AddOn'
     },
-    dishName: {
-      type: String,
-      required: true
-    },
-    variant: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Variant'
-    },
-    variantName: {
+    addOnName: {
       type: String
-    },
-    quantity: {
-      type: Number,
-      required: true
-    },
-    // Add station field for kitchen workflow
-    station: {
-      type: String,
-      enum: ['grill', 'fry', 'salad', 'dessert', 'bar'],
-      default: 'grill'
-    },
-    addOns: [{
-      addOn: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'AddOn'
-      },
-      addOnName: {
-        type: String
-      }
-    }],
-    notes: {
-      type: String
-    },
-    // Track item status separately
-    itemStatus: {
-      type: String,
-      enum: ['pending', 'preparing', 'ready', 'completed'],
-      default: 'pending'
     }
   }],
+  notes: {
+    type: String
+  }
+}],
   kotStatus: {
     type: String,
     enum: ['pending', 'preparing', 'ready', 'served', 'completed', 'cancelled'],

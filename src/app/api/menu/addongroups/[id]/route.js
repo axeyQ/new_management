@@ -1,27 +1,24 @@
-// src/app/api/menu/addongroups/[id]/route.js
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import AddOnGroup from '@/models/AddOnGroup';
 import AddOn from '@/models/AddOn';
 import { roleMiddleware } from '@/lib/auth';
+import { getStatusIdFromBoolean } from '@/utils/statusHelper';
 
 // Get a specific addon group
 export const GET = async (request, { params }) => {
   try {
     const { id } = params;
     await connectDB();
-    
     const addonGroup = await AddOnGroup.findById(id)
       .populate('addOns')
       .populate('availabilityStatus');
-    
     if (!addonGroup) {
       return NextResponse.json(
         { success: false, message: 'Add-on group not found' },
         { status: 404 }
       );
     }
-    
     return NextResponse.json({
       success: true,
       data: addonGroup
@@ -39,7 +36,15 @@ export const GET = async (request, { params }) => {
 const updateHandler = async (request, { params }) => {
   try {
     const { id } = params;
-    const { name, availabilityStatus } = await request.json();
+    const { 
+      name, 
+      availabilityStatus, // This will be a boolean from the form
+      isCompulsory, 
+      minSelection, 
+      maxSelection,
+      allowMultiple,
+      maxQuantityPerItem 
+    } = await request.json();
     
     await connectDB();
     
@@ -65,7 +70,19 @@ const updateHandler = async (request, { params }) => {
     
     // Update fields
     if (name) addonGroup.name = name;
-    if (availabilityStatus !== undefined) addonGroup.availabilityStatus = availabilityStatus;
+    
+    // Convert availability boolean to Status ObjectId if it's provided
+    if (availabilityStatus !== undefined) {
+      const statusId = await getStatusIdFromBoolean(availabilityStatus);
+      addonGroup.availabilityStatus = statusId;
+    }
+    
+    // Update new fields
+    if (isCompulsory !== undefined) addonGroup.isCompulsory = isCompulsory;
+    if (minSelection !== undefined) addonGroup.minSelection = minSelection;
+    if (maxSelection !== undefined) addonGroup.maxSelection = maxSelection;
+    if (allowMultiple !== undefined) addonGroup.allowMultiple = allowMultiple;
+    if (maxQuantityPerItem !== undefined) addonGroup.maxQuantityPerItem = maxQuantityPerItem;
     
     addonGroup.updatedBy = request.user._id;
     addonGroup.updatedAt = Date.now();
@@ -92,25 +109,12 @@ const deleteHandler = async (request, { params }) => {
   try {
     const { id } = params;
     await connectDB();
-    
     const addonGroup = await AddOnGroup.findById(id);
     if (!addonGroup) {
       return NextResponse.json(
         { success: false, message: 'Add-on group not found' },
         { status: 404 }
       );
-    }
-    
-    // Check if there are addon items associated with this group
-    if (addonGroup.addOns && addonGroup.addOns.length > 0) {
-      // Option 1: Fail if addons exist
-      // return NextResponse.json(
-      //   { success: false, message: 'Cannot delete group with active add-ons' },
-      //   { status: 400 }
-      // );
-      
-      // Option 2: Remove the association but keep the addons
-      // Don't delete addons, but remove their associations
     }
     
     // Delete the addon group

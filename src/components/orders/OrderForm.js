@@ -1,38 +1,44 @@
 'use client';
 import { useState, useEffect } from 'react';
 import {
+  TextField,
+  Button,
   Paper,
   Typography,
   Box,
   Grid,
-  TextField,
-  Button,
   FormControl,
   InputLabel,
   Select,
   MenuItem,
-  Table,
-  TableBody,
-  TableCell,
-  TableContainer,
-  TableHead,
-  TableRow,
-  IconButton,
   Chip,
+  OutlinedInput,
+  FormHelperText,
+  CircularProgress,
   Divider,
-  InputAdornment,
-  Card,
-  CardContent,
-  CardHeader,
   List,
   ListItem,
+  ListItemButton,
   ListItemText,
+  IconButton,
   Dialog,
-  DialogActions,
-  DialogContent,
   DialogTitle,
-  FormHelperText,
+  DialogContent,
+  DialogContentText,
+  DialogActions,
+  Alert,
+  InputAdornment,
+  TableContainer,
+  Table,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableBody,
+  CardHeader,
+  Card,
+  CardContent,
 } from '@mui/material';
+
 import {
   Add as AddIcon,
   Remove as RemoveIcon,
@@ -40,9 +46,14 @@ import {
   Person as PersonIcon,
   Save as SaveIcon,
   Cancel as CancelIcon,
+  Print as PrintIcon,
   AddCircle as AddCircleIcon,
+  TableRestaurant as TableIcon,
+  LocalDining as DiningIcon,
+  Fastfood as FastfoodIcon,
   Search as SearchIcon,
 } from '@mui/icons-material';
+
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
@@ -60,7 +71,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   const router = useRouter();
   const { user } = useAuth();
   const isEditMode = !!orderId;
-  
   const [loading, setLoading] = useState(false);
   const [initialized, setInitialized] = useState(false);
   
@@ -99,6 +109,7 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
     subtotalAmount: 0,
     totalTaxAmount: 0,
     totalAmount: 0,
+    menu: '', // Added menu field
   });
   
   // Reference data
@@ -107,15 +118,21 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   const [subCategories, setSubCategories] = useState([]);
   const [dishes, setDishes] = useState([]);
   const [customers, setCustomers] = useState([]);
+  const [menus, setMenus] = useState([]); // Added menus state
   
   // UI state
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedSubCategory, setSelectedSubCategory] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [filteredDishes, setFilteredDishes] = useState([]);
+  const [openPaymentDialog, setOpenPaymentDialog] = useState(false);
   const [openCustomerDialog, setOpenCustomerDialog] = useState(false);
   const [openDiscountDialog, setOpenDiscountDialog] = useState(false);
-  const [openPaymentDialog, setOpenPaymentDialog] = useState(false);
+  
+  // Add-ons state
+  const [openAddonsDialog, setOpenAddonsDialog] = useState(false);
+  const [selectedItemIndex, setSelectedItemIndex] = useState(null);
+  const [availableAddons, setAvailableAddons] = useState([]);
   
   // Load data
   useEffect(() => {
@@ -127,6 +144,7 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
           fetchCategories(),
           fetchDishes(),
           fetchCustomers(),
+          fetchMenus(),
         ]);
         
         if (isEditMode) {
@@ -189,7 +207,9 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   
   const fetchSubCategories = async (categoryId) => {
     try {
-      const url = categoryId ? `/api/menu/subcategories?category=${categoryId}` : '/api/menu/subcategories';
+      const url = categoryId 
+        ? `/api/menu/subcategories?category=${categoryId}` 
+        : '/api/menu/subcategories';
       const res = await axiosWithAuth.get(url);
       if (res.data.success) {
         setSubCategories(res.data.data);
@@ -211,10 +231,104 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
     }
   };
   
+  const fetchMenus = async () => {
+    try {
+      // Only fetch menus specifically for the current order mode
+      const url = orderData.orderMode 
+        ? `/api/menu/menus?mode=${orderData.orderMode}&strictMode=true` 
+        : '/api/menu/menus';
+      
+      const res = await axiosWithAuth.get(url);
+      if (res.data.success) {
+        setMenus(res.data.data);
+        
+        // If there's a default menu for this mode, select it
+        const defaultMenu = res.data.data.find(menu => menu.isDefault);
+        if (defaultMenu) {
+          setOrderData(prev => ({
+            ...prev,
+            menu: defaultMenu._id
+          }));
+          
+          // When menu changes, refresh items with new pricing
+          fetchMenuItems(defaultMenu._id);
+        } else if (res.data.data.length > 0) {
+          // If no default but menus exist, select the first one
+          setOrderData(prev => ({
+            ...prev,
+            menu: res.data.data[0]._id
+          }));
+          
+          fetchMenuItems(res.data.data[0]._id);
+        } else {
+          // Clear menu selection if no menus available
+          setOrderData(prev => ({
+            ...prev,
+            menu: ''
+          }));
+        }
+      } else {
+        toast.error('Failed to load menus');
+      }
+    } catch (error) {
+      console.error('Error fetching menus:', error);
+      toast.error('Error loading menus');
+    }
+  };
+  
+  const fetchMenuItems = async (menuId) => {
+    if (!menuId) return;
+    
+    try {
+      const res = await axiosWithAuth.get(`/api/menu/pricing?menu=${menuId}`);
+      if (res.data.success) {
+        // Update available dishes with pricing information
+        const dishesWithPricing = res.data.data.map(item => ({
+          ...item.dish,
+          price: item.price,
+          finalPrice: item.finalPrice,
+          taxRate: item.taxRate,
+          taxAmount: item.taxAmount,
+          taxSlab: item.taxSlab,
+          variant: item.variant,
+          menuPricingId: item._id,
+          isAvailable: item.isAvailable
+        }));
+        
+        // Filter out unavailable items
+        const availableDishes = dishesWithPricing.filter(dish => dish.isAvailable !== false);
+        
+        setDishes(availableDishes);
+        filterDishes(); // Refresh filtered dishes
+      }
+    } catch (error) {
+      console.error('Error fetching menu items:', error);
+    }
+  };
+  
+  const fetchDishAddons = async (dishId, variantId = null) => {
+    if (!dishId || !orderData.menu) return [];
+    
+    try {
+      let url = `/api/menu/addon-pricing/dish?menuId=${orderData.menu}&dishId=${dishId}`;
+      if (variantId) {
+        url += `&variantId=${variantId}`;
+      }
+      
+      const res = await axiosWithAuth.get(url);
+      if (res.data.success) {
+        return res.data.data;
+      }
+      return [];
+    } catch (error) {
+      console.error('Error fetching dish add-ons:', error);
+      return [];
+    }
+  };
+  
   const fetchCustomers = async () => {
     try {
-      // In a real app, this would fetch from a customers API
-      // Simulating with mock data for now
+      // For demo, use mock data since customer API might not be implemented yet
       setCustomers([
         { name: 'John Doe', phone: '9876543210', email: 'john@example.com' },
         { name: 'Jane Smith', phone: '8765432109', email: 'jane@example.com' },
@@ -243,32 +357,38 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   
   // Filter dishes based on search and category
   const filterDishes = () => {
+    if (!dishes || dishes.length === 0) return;
+    
     let filtered = [...dishes];
     
     if (selectedCategory) {
-      // Filter by category
+      // First filter by category
       const subCatsInCategory = subCategories.filter(
-        sc => sc.category && sc.category._id === selectedCategory
+        sc => sc.category._id === selectedCategory
       ).map(sc => sc._id);
       
       filtered = filtered.filter(dish => {
-        const dishSubCats = dish.subCategory ? dish.subCategory.map(sc => 
-          typeof sc === 'string' ? sc : sc._id) : [];
+        // Handle both string IDs and object references
+        const dishSubCats = (dish.subCategory || []).map(sc => 
+          typeof sc === 'string' ? sc : sc._id
+        );
+        
         return dishSubCats.some(id => subCatsInCategory.includes(id));
       });
     }
     
     if (selectedSubCategory) {
-      // Filter by subcategory
-      filtered = filtered.filter(dish => {
-        const dishSubCats = dish.subCategory ? dish.subCategory.map(sc => 
-          typeof sc === 'string' ? sc : sc._id) : [];
-        return dishSubCats.includes(selectedSubCategory);
-      });
+      // Then filter by subcategory if selected
+      filtered = filtered.filter(dish => 
+        (dish.subCategory || []).some(sc => {
+          const scId = typeof sc === 'string' ? sc : sc._id;
+          return scId === selectedSubCategory;
+        })
+      );
     }
     
     if (searchTerm) {
-      // Filter by search term
+      // Finally filter by search term
       const lowerSearchTerm = searchTerm.toLowerCase();
       filtered = filtered.filter(dish =>
         dish.dishName.toLowerCase().includes(lowerSearchTerm)
@@ -291,6 +411,9 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       // Add packaging charge if takeaway or delivery
       packagingCharge: mode.includes('Takeaway') || mode.includes('Delivery') ? 20 : 0,
     }));
+    
+    // Update menus when order mode changes
+    fetchMenus();
   };
   
   const handleTableChange = (e) => {
@@ -298,6 +421,17 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       ...prev,
       table: e.target.value
     }));
+  };
+  
+  const handleMenuChange = (e) => {
+    const menuId = e.target.value;
+    setOrderData(prev => ({
+      ...prev,
+      menu: menuId
+    }));
+    
+    // Load menu items with pricing
+    fetchMenuItems(menuId);
   };
   
   const handleCustomerChange = (field, value) => {
@@ -338,38 +472,42 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
     setSearchTerm(e.target.value);
   };
   
-  // Add dish to order
-  const addDishToOrder = (dish) => {
-    // For real implementation, this would fetch the price from a menu pricing API
-    // Using a mock price here
-    const dishPrice = 100; 
+  // Item management
+  const addDishToOrder = async (dish) => {
+    if (!orderData.menu) {
+      toast.error('Please select a menu first');
+      return;
+    }
     
     // Check if dish already exists in order
     const existingItemIndex = orderData.itemsSold.findIndex(
-      item => (item.dish === dish._id || item.dish?._id === dish._id) && !item.variant
+      item => item.dish === dish._id && 
+        (item.variant === (dish.variant?._id || null) || 
+         (!item.variant && !dish.variant))
     );
     
     if (existingItemIndex >= 0) {
       // Update quantity if dish already exists
       const updatedItems = [...orderData.itemsSold];
-      updatedItems[existingItemIndex] = {
-        ...updatedItems[existingItemIndex],
-        quantity: updatedItems[existingItemIndex].quantity + 1
-      };
-      
+      updatedItems[existingItemIndex].quantity += 1;
       setOrderData(prev => ({
         ...prev,
         itemsSold: updatedItems
       }));
     } else {
+      // Fetch available add-ons for this dish
+      const dishAddons = await fetchDishAddons(dish._id, dish.variant?._id);
+      
       // Add new item
       const newItem = {
-        dish: dish._id || dish,
+        dish: dish._id,
         dishName: dish.dishName,
-        variant: null,  // Set variant to null instead of empty string
+        variant: dish.variant?._id || null,
+        variantName: dish.variant?.variantName || '',
         quantity: 1,
-        price: dishPrice,
+        price: dish.price || 0, // Use menu price
         addOns: [],
+        availableAddons: dishAddons, // Store available add-ons
         notes: ''
       };
       
@@ -388,10 +526,7 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       // Remove item if quantity is zero or negative
       updatedItems.splice(index, 1);
     } else {
-      updatedItems[index] = {
-        ...updatedItems[index],
-        quantity: newQuantity
-      };
+      updatedItems[index].quantity = newQuantity;
     }
     
     setOrderData(prev => ({
@@ -412,10 +547,51 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   
   const updateItemNote = (index, note) => {
     const updatedItems = [...orderData.itemsSold];
-    updatedItems[index] = {
-      ...updatedItems[index],
-      notes: note
-    };
+    updatedItems[index].notes = note;
+    
+    setOrderData(prev => ({
+      ...prev,
+      itemsSold: updatedItems
+    }));
+  };
+  
+  // Add-on management
+  const handleAddAddonClick = (itemIndex) => {
+    const item = orderData.itemsSold[itemIndex];
+    setSelectedItemIndex(itemIndex);
+    setAvailableAddons(item.availableAddons || []);
+    setOpenAddonsDialog(true);
+  };
+  
+  const addAddonToItem = (itemIndex, addon) => {
+    const updatedItems = [...orderData.itemsSold];
+    
+    // Check if this addon is already added
+    const existingAddonIndex = updatedItems[itemIndex].addOns.findIndex(
+      a => a.addOn === addon._id
+    );
+    
+    if (existingAddonIndex >= 0) {
+      toast.info('This add-on is already added to the item');
+      return;
+    }
+    
+    // Add the addon
+    updatedItems[itemIndex].addOns.push({
+      addOn: addon._id,
+      name: addon.name,
+      price: addon.price
+    });
+    
+    setOrderData(prev => ({
+      ...prev,
+      itemsSold: updatedItems
+    }));
+  };
+  
+  const removeAddonFromItem = (itemIndex, addonIndex) => {
+    const updatedItems = [...orderData.itemsSold];
+    updatedItems[itemIndex].addOns.splice(addonIndex, 1);
     
     setOrderData(prev => ({
       ...prev,
@@ -426,7 +602,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   // Discount handling
   const handleDiscountTypeChange = (e) => {
     const discountType = e.target.value;
-    
     setOrderData(prev => ({
       ...prev,
       discount: {
@@ -472,10 +647,7 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   // Payment handling
   const handlePaymentMethodChange = (index, method) => {
     const updatedPayments = [...orderData.payment];
-    updatedPayments[index] = {
-      ...updatedPayments[index],
-      method
-    };
+    updatedPayments[index].method = method;
     
     setOrderData(prev => ({
       ...prev,
@@ -485,10 +657,7 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   
   const handlePaymentAmountChange = (index, amount) => {
     const updatedPayments = [...orderData.payment];
-    updatedPayments[index] = {
-      ...updatedPayments[index],
-      amount: parseFloat(amount) || 0
-    };
+    updatedPayments[index].amount = parseFloat(amount) || 0;
     
     setOrderData(prev => ({
       ...prev,
@@ -517,12 +686,21 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   const calculateTotals = () => {
     // Calculate subtotal
     const subtotal = orderData.itemsSold.reduce((sum, item) => {
-      return sum + (item.price * item.quantity);
+      let itemTotal = item.price * item.quantity;
+      
+      // Add addon prices
+      if (item.addOns && item.addOns.length > 0) {
+        item.addOns.forEach(addon => {
+          itemTotal += addon.price || 0;
+        });
+      }
+      
+      return sum + itemTotal;
     }, 0);
     
     // Calculate taxes
     const taxes = orderData.taxDetails.map(tax => {
-      const taxAmount = parseFloat(((subtotal * tax.taxRate) / 100).toFixed(2));
+      const taxAmount = (subtotal * tax.taxRate) / 100;
       return {
         ...tax,
         taxAmount
@@ -534,22 +712,19 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
     // Calculate discount
     let discountValue = 0;
     if (orderData.discount.discountType === 'percentage') {
-      discountValue = parseFloat(((subtotal * orderData.discount.discountPercentage) / 100).toFixed(2));
+      discountValue = (subtotal * orderData.discount.discountPercentage) / 100;
     } else {
       discountValue = orderData.discount.discountValue;
     }
     
     // Calculate total
-    const total = parseFloat((subtotal + totalTax + orderData.deliveryCharge +
-      orderData.packagingCharge - discountValue).toFixed(2));
+    const total = subtotal + totalTax + orderData.deliveryCharge + 
+                  orderData.packagingCharge - discountValue;
     
     // Update payment amount if only one payment method
     let updatedPayment = [...orderData.payment];
     if (updatedPayment.length === 1) {
-      updatedPayment[0] = {
-        ...updatedPayment[0],
-        amount: total
-      };
+      updatedPayment[0].amount = total;
     }
     
     // Update order data with calculations
@@ -575,6 +750,11 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       return;
     }
     
+    if (!orderData.menu) {
+      toast.error('Please select a menu');
+      return;
+    }
+    
     if (orderData.orderMode === 'Dine-in' && !orderData.table) {
       toast.error('Please select a table for dine-in orders');
       return;
@@ -585,42 +765,67 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       return;
     }
     
+    // Validate payment
+    const totalPayment = orderData.payment.reduce((sum, p) => sum + p.amount, 0);
+    if (Math.abs(totalPayment - orderData.totalAmount) > 0.01) {
+      toast.error('Total payment amount must equal order total');
+      return;
+    }
+    
     setLoading(true);
     
     try {
-      // Generate temporary refNum and invoiceNumber if needed (for new orders)
-      // In a real implementation, this would be handled by the server
-      let dataToSubmit = {...orderData};
-      
-      if (!isEditMode) {
-        // Generate a temporary reference number and invoice number for new orders
-        // The server will replace these with properly generated values
-        const now = new Date();
-        const dateStr = now.toISOString().slice(0,10).replace(/-/g,'');
-        const timeStr = now.getTime().toString().slice(-6);
-        
-        dataToSubmit.refNum = `REF-${dateStr}-${timeStr}`;
-        dataToSubmit.invoiceNumber = `INV-${dateStr}-${timeStr}`;
-      }
-      
-      // Clean up data - ensure variant field is properly formatted
-      dataToSubmit.itemsSold = dataToSubmit.itemsSold.map(item => ({
-        ...item,
-        variant: item.variant || null  // Ensure variant is null rather than empty string
-      }));
-      
       const method = isEditMode ? 'put' : 'post';
       const url = isEditMode ? `/api/orders/${orderId}` : '/api/orders';
       
-      const res = await axiosWithAuth[method](url, dataToSubmit);
+      const res = await axiosWithAuth[method](url, orderData);
       
       if (res.data.success) {
         toast.success(
           isEditMode ? 'Order updated successfully' : 'Order created successfully'
         );
         
+        // Create KOT
+        if (!isEditMode) {
+          try {
+            const kotData = {
+              salesOrder: res.data.data._id,
+              items: res.data.data.itemsSold.map(item => ({
+                dish: item.dish,
+                dishName: item.dishName,
+                variant: item.variant,
+                variantName: item.variantName,
+                quantity: item.quantity,
+                addOns: item.addOns?.map(addon => ({
+                  addOn: addon.addOn,
+                  addOnName: addon.name
+                })) || [],
+                notes: item.notes
+              })),
+              kotStatus: 'pending'
+            };
+            
+            await axiosWithAuth.post('/api/orders/kot', kotData);
+          } catch (error) {
+            console.error('Error creating KOT:', error);
+          }
+          
+          // Create invoice
+          try {
+            const invoiceData = {
+              salesOrder: res.data.data._id
+            };
+            
+            await axiosWithAuth.post('/api/orders/invoice', invoiceData);
+          } catch (error) {
+            console.error('Error creating invoice:', error);
+          }
+        }
+        
         if (onSuccess) {
-          onSuccess(res.data.data);
+          onSuccess();
+        } else {
+          router.push('/dashboard/orders');
         }
       } else {
         toast.error(res.data.message || 'An error occurred');
@@ -634,11 +839,10 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   };
   
   return (
-    <Box sx={{ py: 1 }}>
+    <Box>
       <Typography variant="h5" gutterBottom>
         {isEditMode ? 'Edit Order' : 'Create New Order'}
       </Typography>
-      
       <Grid container spacing={3}>
         {/* Left column: Order details & Items */}
         <Grid item xs={12} md={8}>
@@ -662,6 +866,29 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                     <MenuItem value="Direct Order-Takeaway">Direct Takeaway</MenuItem>
                     <MenuItem value="Direct Order-Delivery">Direct Delivery</MenuItem>
                     <MenuItem value="Zomato">Zomato</MenuItem>
+                  </Select>
+                </FormControl>
+              </Grid>
+              
+              <Grid item xs={12} sm={6}>
+                <FormControl fullWidth margin="normal">
+                  <InputLabel id="menu-label">Menu</InputLabel>
+                  <Select
+                    labelId="menu-label"
+                    value={orderData.menu}
+                    onChange={handleMenuChange}
+                    label="Menu"
+                    required
+                    disabled={isEditMode}
+                  >
+                    <MenuItem value="">
+                      <em>Select a menu</em>
+                    </MenuItem>
+                    {menus.map((menu) => (
+                      <MenuItem key={menu._id} value={menu._id}>
+                        {menu.name}
+                      </MenuItem>
+                    ))}
                   </Select>
                 </FormControl>
               </Grid>
@@ -723,7 +950,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                 Select Customer
               </Button>
             </Box>
-            
             <Grid container spacing={2}>
               <Grid item xs={12} sm={6}>
                 <TextField
@@ -737,7 +963,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                   margin="normal"
                 />
               </Grid>
-              
               <Grid item xs={12} sm={6}>
                 <TextField
                   fullWidth
@@ -770,7 +995,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
           
           <Paper sx={{ p: 2, mb: 3 }}>
             <Typography variant="h6" gutterBottom>Order Items</Typography>
-            
             {/* Item selection interface */}
             <Grid container spacing={2} mb={3}>
               <Grid item xs={12} sm={6} md={4}>
@@ -791,7 +1015,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                   </Select>
                 </FormControl>
               </Grid>
-              
               <Grid item xs={12} sm={6} md={4}>
                 <FormControl fullWidth size="small">
                   <InputLabel id="subcategory-label">Subcategory</InputLabel>
@@ -811,7 +1034,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                   </Select>
                 </FormControl>
               </Grid>
-              
               <Grid item xs={12} sm={12} md={4}>
                 <TextField
                   fullWidth
@@ -836,18 +1058,20 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                 {filteredDishes.map((dish) => (
                   <Chip
                     key={dish._id}
-                    label={dish.dishName}
+                    icon={<FastfoodIcon />}
+                    label={`${dish.dishName}${dish.variant ? ` - ${dish.variant.variantName}` : ''} (₹${dish.price})`}
                     onClick={() => addDishToOrder(dish)}
                     color="primary"
                     variant="outlined"
                     sx={{ m: 0.5 }}
+                    disabled={!orderData.menu}
                   />
                 ))}
               </Box>
             ) : (
               <Box sx={{ textAlign: 'center', py: 2, mb: 3 }}>
                 <Typography variant="body2" color="text.secondary">
-                  No dishes found. Try adjusting your filters.
+                  No dishes found. Try adjusting your filters or selecting a menu first.
                 </Typography>
               </Box>
             )}
@@ -871,9 +1095,39 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                     {orderData.itemsSold.map((item, index) => (
                       <TableRow key={index}>
                         <TableCell>
-                          <Typography variant="body2">{item.dishName}</Typography>
+                          <Typography variant="body2">
+                            {item.dishName}
+                            {item.variantName && ` - ${item.variantName}`}
+                          </Typography>
+                          
+                          {/* Add-ons display */}
+                          {item.addOns && item.addOns.length > 0 && (
+                            <Box mt={0.5}>
+                              {item.addOns.map((addon, addonIndex) => (
+                                <Chip
+                                  key={addonIndex}
+                                  label={`${addon.name} (₹${addon.price.toFixed(2)})`}
+                                  size="small"
+                                  onDelete={() => removeAddonFromItem(index, addonIndex)}
+                                  sx={{ mr: 0.5, mb: 0.5 }}
+                                />
+                              ))}
+                            </Box>
+                          )}
+                          
+                          {/* Add-on button */}
+                          <Button
+                            size="small"
+                            startIcon={<AddCircleIcon />}
+                            onClick={() => handleAddAddonClick(index)}
+                            sx={{ mt: 0.5 }}
+                            disabled={!item.availableAddons || item.availableAddons.length === 0}
+                          >
+                            Add-on
+                          </Button>
+                          
                           {item.notes && (
-                            <Typography variant="caption" color="text.secondary">
+                            <Typography variant="caption" color="text.secondary" display="block">
                               Note: {item.notes}
                             </Typography>
                           )}
@@ -896,7 +1150,11 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                           </Box>
                         </TableCell>
                         <TableCell align="right">₹{item.price.toFixed(2)}</TableCell>
-                        <TableCell align="right">₹{(item.price * item.quantity).toFixed(2)}</TableCell>
+                        <TableCell align="right">
+                          ₹{((item.price * item.quantity) + 
+                             (item.addOns ? item.addOns.reduce((sum, addon) => sum + addon.price, 0) : 0)
+                            ).toFixed(2)}
+                        </TableCell>
                         <TableCell align="center">
                           <IconButton
                             size="small"
@@ -1074,7 +1332,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                       ? 'Update Order'
                       : 'Place Order'}
                 </Button>
-                
                 <Button
                   fullWidth
                   variant="outlined"
@@ -1113,7 +1370,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
               ),
             }}
           />
-          
           <List>
             {customers.map((customer, index) => (
               <ListItem
@@ -1186,7 +1442,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenDiscountDialog(false)}>Cancel</Button>
-          
           <Button
             onClick={() => {
               // Reset discount
@@ -1205,7 +1460,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
           >
             Remove Discount
           </Button>
-          
           <Button
             onClick={() => setOpenDiscountDialog(false)}
             variant="contained"
@@ -1291,9 +1545,7 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
             <Typography variant="body2">
               Total Paid: ₹{orderData.payment.reduce((sum, p) => sum + p.amount, 0).toFixed(2)}
             </Typography>
-            
-            {Math.abs(orderData.payment.reduce((sum, p) => sum + p.amount, 0) -
-              orderData.totalAmount) > 0.01 && (
+            {Math.abs(orderData.payment.reduce((sum, p) => sum + p.amount, 0) - orderData.totalAmount) > 0.01 && (
               <Typography variant="body2" color="error">
                 Payment amount doesn&apos;t match order total
               </Typography>
@@ -1302,37 +1554,26 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenPaymentDialog(false)}>Cancel</Button>
-          
           <Button
             onClick={() => {
               // Set full amount to first payment method
               const updatedPayments = [...orderData.payment];
               if (updatedPayments.length > 0) {
-                updatedPayments[0] = {
-                  ...updatedPayments[0],
-                  amount: orderData.totalAmount
-                };
-                
+                updatedPayments[0].amount = orderData.totalAmount;
                 for (let i = 1; i < updatedPayments.length; i++) {
-                  updatedPayments[i] = {
-                    ...updatedPayments[i],
-                    amount: 0
-                  };
+                  updatedPayments[i].amount = 0;
                 }
-                
                 setOrderData(prev => ({
                   ...prev,
                   payment: updatedPayments
                 }));
               }
-              
               setOpenPaymentDialog(false);
             }}
             variant="outlined"
           >
             Full Amount to First Method
           </Button>
-          
           <Button
             onClick={() => setOpenPaymentDialog(false)}
             variant="contained"
@@ -1340,6 +1581,42 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
           >
             Confirm
           </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* Add-ons Dialog */}
+      <Dialog
+        open={openAddonsDialog}
+        onClose={() => setOpenAddonsDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Add Add-ons</DialogTitle>
+        <DialogContent>
+          {availableAddons.length === 0 ? (
+            <Alert severity="info" sx={{ mt: 2 }}>
+              No add-ons available for this item
+            </Alert>
+          ) : (
+            <List>
+              {availableAddons.map((addon) => (
+                <ListItem key={addon._id} disablePadding>
+                  <ListItemButton onClick={() => {
+                    addAddonToItem(selectedItemIndex, addon);
+                    setOpenAddonsDialog(false);
+                  }}>
+                    <ListItemText 
+                      primary={addon.name} 
+                      secondary={`₹${addon.price.toFixed(2)}`} 
+                    />
+                  </ListItemButton>
+                </ListItem>
+              ))}
+            </List>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenAddonsDialog(false)}>Cancel</Button>
         </DialogActions>
       </Dialog>
     </Box>

@@ -38,37 +38,48 @@ const SalesOrderSchema = new mongoose.Schema({
       type: String
     }
   },
-  itemsSold: [{
-    dish: { 
-      type: mongoose.Schema.Types.ObjectId, 
-      ref: 'Dish'
+itemsSold: [{
+  dish: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Dish'
+  },
+  dishName: {
+    type: String,
+    required: true
+  },
+  variant: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Variant'
+  },
+  variantName: {
+    type: String
+  },
+  quantity: {
+    type: Number,
+    required: true
+  },
+  price: {
+    type: Number,
+    required: true
+  },
+  addOns: [{
+    addOn: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'AddOn'
     },
-    variant: { 
-      type: mongoose.Schema.Types.ObjectId, 
-      ref: 'Variant'
+    name: {
+      type: String,
+      required: true
     },
-    quantity: { 
-      type: Number, 
-      required: true 
-    },
-    price: { 
-      type: Number, 
-      required: true 
-    },
-    addOns: [{
-      addOn: { 
-        type: mongoose.Schema.Types.ObjectId, 
-        ref: 'AddOn'
-      },
-      price: { 
-        type: Number, 
-        required: true 
-      }
-    }],
-    notes: { 
-      type: String 
+    price: {
+      type: Number,
+      required: true
     }
   }],
+  notes: {
+    type: String
+  }
+}],
   taxDetails: [{
     taxName: { 
       type: String, 

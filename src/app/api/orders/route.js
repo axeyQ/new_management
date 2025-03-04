@@ -119,10 +119,11 @@ const createHandler = async (request) => {
     // Calculate subtotal from items
     orderData.itemsSold.forEach(item => {
       subtotalAmount += item.price * item.quantity;
+      
       // Add addon prices if any
       if (item.addOns && item.addOns.length > 0) {
         item.addOns.forEach(addon => {
-          subtotalAmount += addon.price;
+          subtotalAmount += addon.price || 0;
         });
       }
     });
