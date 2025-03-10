@@ -38,11 +38,11 @@ import {
   Storage as StorageIcon,
   CloudSync as CloudIcon
 } from '@mui/icons-material';
-import ReactDiffViewer from 'react-diff-viewer';
 import { format } from 'date-fns';
 import * as idb from '@/lib/indexedDBService';
 import enhancedAxiosWithAuth from '@/lib/enhancedAxiosWithAuth';
 import toast from 'react-hot-toast';
+import MonacoDiffViewer from '../common/MonacoDiffViewer';
 
 const AdvancedConflictModal = ({ 
   open, 
@@ -479,14 +479,12 @@ const AdvancedConflictModal = ({
                   <Typography variant="subtitle2" gutterBottom>
                     Visual Comparison
                   </Typography>
-                  <ReactDiffViewer
-                    oldValue={JSON.stringify(currentConflict.serverData, null, 2)}
-                    newValue={JSON.stringify(currentConflict.localData, null, 2)}
-                    splitView={true}
-                    leftTitle="Server Version"
-                    rightTitle="Local Version"
-                    useDarkTheme={false}
-                  />
+                  <MonacoDiffViewer
+  oldValue={JSON.stringify(currentConflict.serverData, null, 2)}
+  newValue={JSON.stringify(currentConflict.localData, null, 2)}
+  leftTitle="Server Version"
+  rightTitle="Local Version"
+/>
                 </Box>
               )}
               
