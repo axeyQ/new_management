@@ -16,7 +16,36 @@ export function NetworkProvider({ children }) {
   const [lastOnlineAt, setLastOnlineAt] = useState(
     typeof localStorage !== 'undefined' ? localStorage.getItem('lastOnlineAt') : null
   );
-
+  useEffect(() => {
+    // Get last known online status from localStorage
+    const lastKnownStatus = localStorage.getItem('lastOnlineStatus');
+    if (lastKnownStatus !== null) {
+      setIsOnline(lastKnownStatus === 'true');
+    }
+    
+    const handleOnline = () => {
+      setIsOnline(true);
+      setShowOnlineAlert(true);
+      localStorage.setItem('lastOnlineStatus', 'true');
+      const now = new Date().toISOString();
+      setLastOnlineAt(now);
+      localStorage.setItem('lastOnlineAt', now);
+    };
+    
+    const handleOffline = () => {
+      setIsOnline(false);
+      setShowOfflineAlert(true);
+      localStorage.setItem('lastOnlineStatus', 'false');
+    };
+    
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
+    
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
