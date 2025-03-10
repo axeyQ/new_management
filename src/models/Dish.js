@@ -57,6 +57,29 @@ const DishSchema = new mongoose.Schema({
     enum: ['Freshly Frosted', 'Pre Frosted', ''],
     default: ''
   },
+  stockStatus: {
+  isOutOfStock: {
+    type: Boolean,
+    default: false
+  },
+  restockTime: {
+    type: Date
+  },
+  outOfStockReason: {
+    type: String
+  },
+  autoRestock: {
+    type: Boolean,
+    default: true
+  },
+  lastStockUpdate: {
+    type: Date
+  },
+  lastStockUpdateBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }
+},
 servingInfo: {
   portionSize: { type: String },
   quantity: { type: Number },
@@ -99,6 +122,11 @@ servingInfo: {
       default: 'dish'
     }
   },
+  deliveryCharges: {
+    type: { type: String, enum: ['fixed', 'percentage'], required: true },
+    amount: { type: Number, required: true },
+    appliedAt: { type: String, enum: ['dish', 'billing'], required: true }
+  },
   gstItemType: { 
     type: String, 
     enum: ['goods', 'services'],
@@ -108,6 +136,20 @@ servingInfo: {
     type: mongoose.Schema.Types.ObjectId, 
     ref: 'Tax' 
   },
+meatTypes: {
+  type: [String],
+  default: function() {
+    // Set default to Chicken for non-veg dishes
+    return this.dieteryTag === 'non veg' ? ['Chicken'] : [];
+  },
+  validate: {
+    validator: function(v) {
+      // Only required for non-veg dishes
+      return this.dieteryTag !== 'non veg' || (v && v.length > 0);
+    },
+    message: 'Meat types are required for non-vegetarian dishes'
+  }
+},
   natureTags: {
     cuisine: { type: String, default: '' },
     spiciness: { type: String, default: '' },
@@ -136,6 +178,8 @@ servingInfo: {
     type: Date, 
     default: Date.now 
   }
+
+  
 });
 
 // Add a pre-save hook to ensure natureTags are properly set

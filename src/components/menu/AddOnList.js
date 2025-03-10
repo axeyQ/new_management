@@ -1,4 +1,3 @@
-// src/components/menu/AddOnList.js - Updated to display custom add-ons
 import { useState, useEffect } from 'react';
 import {
   Paper,
@@ -33,6 +32,9 @@ import {
   Search as SearchIcon,
   Restaurant as DishIcon,
   Create as CreateIcon,
+  CheckCircle as VegIcon,
+  BakeryDining as EggIcon,
+  LocalDining as NonVegIcon,
 } from '@mui/icons-material';
 import axiosWithAuth from '@/lib/axiosWithAuth';
 import toast from 'react-hot-toast';
@@ -84,20 +86,19 @@ const AddOnList = () => {
         const processedAddons = res.data.data.map(addon => {
           // Find which group this addon belongs to and add it to the addon object
           for (const group of addonGroups) {
-            if (group.addOns && group.addOns.some(id => 
-              String(id) === String(addon._id) || 
+            if (group.addOns && group.addOns.some(id =>
+              String(id) === String(addon._id) ||
               (id._id && String(id._id) === String(addon._id))
             )) {
               return {
                 ...addon,
-                groupName: group.name,  // Add group name directly to addon object
-                groupId: group._id      // Add group ID directly to addon object
+                groupName: group.name, // Add group name directly to addon object
+                groupId: group._id // Add group ID directly to addon object
               };
             }
           }
           return addon;
         });
-        
         setAddons(processedAddons);
       } else {
         toast.error(res.data.message || 'Failed to fetch add-ons');
@@ -171,21 +172,45 @@ const AddOnList = () => {
   // Find group name for an addon - improved with better checking
   const findAddonGroup = (addonId) => {
     if (!addonGroups || addonGroups.length === 0) return '-';
-    
     for (const group of addonGroups) {
       if (!group.addOns) continue;
-      
       // Handle both array of strings and array of objects
-      const addOnIds = group.addOns.map(addon => 
-        typeof addon === 'string' ? addon : 
-        addon._id ? String(addon._id) : null
+      const addOnIds = group.addOns.map(addon =>
+        typeof addon === 'string' ? addon : addon._id ? String(addon._id) : null
       ).filter(id => id !== null);
-      
       if (addOnIds.includes(String(addonId))) {
         return group.name;
       }
     }
     return '-';
+  };
+
+  // Get dietary tag icon based on the tag value
+  const getDietaryTagIcon = (tag) => {
+    switch (tag) {
+      case 'veg':
+        return <VegIcon fontSize="small" style={{ color: 'green' }} />;
+      case 'non veg':
+        return <NonVegIcon fontSize="small" style={{ color: 'red' }} />;
+      case 'egg':
+        return <EggIcon fontSize="small" style={{ color: 'orange' }} />;
+      default:
+        return <VegIcon fontSize="small" style={{ color: 'green' }} />;
+    }
+  };
+
+  // Format dietary tag for display
+  const formatDietaryTag = (tag) => {
+    switch (tag) {
+      case 'veg':
+        return 'Vegetarian';
+      case 'non veg':
+        return 'Non-Vegetarian';
+      case 'egg':
+        return 'Contains Egg';
+      default:
+        return 'Vegetarian';
+    }
   };
 
   return (
@@ -245,6 +270,7 @@ const AddOnList = () => {
               <TableCell>Price</TableCell>
               <TableCell>Group</TableCell>
               <TableCell>Type</TableCell>
+              <TableCell>Dietary</TableCell>
               <TableCell>Related To</TableCell>
               <TableCell>Status</TableCell>
               <TableCell width="150">Actions</TableCell>
@@ -253,39 +279,59 @@ const AddOnList = () => {
           <TableBody>
             {loading ? (
               <TableRow>
-                <TableCell colSpan={7} align="center">Loading...</TableCell>
+                <TableCell colSpan={8} align="center">Loading...</TableCell>
               </TableRow>
             ) : filteredAddons.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} align="center">No add-ons found</TableCell>
+                <TableCell colSpan={8} align="center">No add-ons found</TableCell>
               </TableRow>
             ) : filteredAddons.map((addon) => (
               <TableRow key={addon._id}>
                 <TableCell>{addon.name}</TableCell>
-                <TableCell>₹{addon.price?.toFixed(2) || '0.00'}</TableCell>
+                <TableCell>
+                  {addon.dishReference ? 
+                    <Typography variant="body2" color="text.secondary">
+                      Mapped from dish
+                    </Typography> : 
+                    `₹${addon.price?.toFixed(2) || '0.00'}`
+                  }
+                </TableCell>
                 <TableCell>
                   {addon.groupName || findAddonGroup(addon._id) || '-'}
                 </TableCell>
                 <TableCell>
                   {addon.dishReference ? (
                     <Tooltip title="Based on a dish">
-                      <Chip 
-                        icon={<DishIcon fontSize="small" />} 
-                        label="Dish-based" 
-                        size="small" 
+                      <Chip
+                        icon={<DishIcon fontSize="small" />}
+                        label="Dish-based"
+                        size="small"
                         color="info"
                       />
                     </Tooltip>
                   ) : (
                     <Tooltip title="Custom add-on">
-                      <Chip 
-                        icon={<CreateIcon fontSize="small" />} 
-                        label="Custom" 
-                        size="small" 
+                      <Chip
+                        icon={<CreateIcon fontSize="small" />}
+                        label="Custom"
+                        size="small"
                         color="secondary"
                       />
                     </Tooltip>
                   )}
+                </TableCell>
+                <TableCell>
+                  <Tooltip title={formatDietaryTag(addon.dieteryTag || addon.dishReference?.dieteryTag || 'veg')}>
+                    <Chip
+                      icon={getDietaryTagIcon(addon.dieteryTag || addon.dishReference?.dieteryTag || 'veg')}
+                      label={addon.dieteryTag || addon.dishReference?.dieteryTag || 'veg'}
+                      size="small"
+                      color={
+                        (addon.dieteryTag || addon.dishReference?.dieteryTag) === 'veg' ? 'success' :
+                        (addon.dieteryTag || addon.dishReference?.dieteryTag) === 'egg' ? 'warning' : 'error'
+                      }
+                    />
+                  </Tooltip>
                 </TableCell>
                 <TableCell>
                   {addon.dishReference ? (

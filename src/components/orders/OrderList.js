@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Paper,
   Typography,
@@ -36,6 +36,7 @@ import {
   Add as AddIcon,
   DateRange as DateRangeIcon,
   FilterList as FilterIcon,
+  Pageview as PageviewIcon,
 } from '@mui/icons-material';
 import OrderForm from './OrderForm';
 import KOTButton from './KOTButton';
@@ -59,6 +60,7 @@ const OrderList = () => {
   const [openCancelDialog, setOpenCancelDialog] = useState(false);
   const [openViewDialog, setOpenViewDialog] = useState(false);
   const [openOrderForm, setOpenOrderForm] = useState(false);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [filters, setFilters] = useState({
     mode: '',
     status: '',
@@ -71,7 +73,11 @@ const OrderList = () => {
   // Fetch orders on component mount or filter change
   useEffect(() => {
     fetchOrders();
-  }, [page, rowsPerPage, filters]);
+  }, [page, rowsPerPage, filters,refreshKey]);
+
+  const handleNavigateToDetails = (orderId) => {
+    router.push(`/dashboard/orders/${orderId}`);
+  };
 
   const fetchOrders = async () => {
     setLoading(true);
@@ -81,24 +87,38 @@ const OrderList = () => {
       if (filters.mode) {
         url += `&mode=${filters.mode}`;
       }
-      
       if (filters.status) {
         url += `&status=${filters.status}`;
       }
-      
-      if (filters.startDate) {
-        url += `&startDate=${filters.startDate}`;
+      // if (filters.startDate) {
+      //   url += `&startDate=${filters.startDate}`;
+      // }
+      // if (filters.endDate) {
+      //   url += `&endDate=${filters.endDate}`;
+      // }
+      if (filters.search) {
+        url += `&search=${filters.search}`;
       }
       
-      if (filters.endDate) {
-        url += `&endDate=${filters.endDate}`;
-      }
-      
+      console.log('Fetching orders from URL:', url);
       const res = await axiosWithAuth.get(url);
+      console.log('Orders API response:', res.data);
+      console.log('Raw orders received:', res.data.data);
       
+      console.log('Orders API response:', res.data);
       if (res.data.success) {
+  console.log('Orders being set:', res.data.data);
+
         setOrders(res.data.data);
         setTotal(res.data.total);
+        
+        // Log order types to debug
+        if (res.data.data.length > 0) {
+          console.log('Order modes in response:', res.data.data.map(o => o.orderMode));
+          console.log('Most recent order:', res.data.data[0]);
+        } else {
+          console.log('No orders returned from API');
+        }
       } else {
         toast.error(res.data.message || 'Failed to fetch orders');
       }
@@ -160,7 +180,31 @@ const OrderList = () => {
     setSelectedOrder(order);
     setOpenOrderForm(true);
   };
-
+  const handleFormSuccess = () => {
+    // Step 1: Reset all filters that might hide the order
+    setFilters({
+      mode: '',
+      status: '',
+      startDate: format(subDays(new Date(), 7), 'yyyy-MM-dd'),
+      endDate: format(new Date(), 'yyyy-MM-dd'),
+      search: ''
+    });
+    
+    // Step 2: Go to the first page
+    setPage(0);
+    
+    // Step 3: Force a complete refresh of orders
+    setRefreshKey(prev => prev + 1);
+    
+    // Step 4: Close the form
+    setOpenOrderForm(false);
+    
+    // Step 5: Set a delay before fetching orders again (ensures DB has time to update)
+    setTimeout(() => {
+      fetchOrders();
+      console.log('Fetching orders after form success');
+    }, 500);
+  };
   const handleCancelConfirm = async () => {
     try {
       const res = await axiosWithAuth.delete(`/api/orders/${selectedOrder._id}`);
@@ -260,6 +304,7 @@ const OrderList = () => {
           >
             {showFilters ? 'Hide Filters' : 'Show Filters'}
           </Button>
+          
         </Box>
 
         {showFilters && (
@@ -416,6 +461,15 @@ const OrderList = () => {
                     >
                       <ViewIcon />
                     </IconButton>
+
+                    <IconButton
+    color="info"
+    onClick={() => handleNavigateToDetails(order._id)}
+    size="small"
+    title="View Full Details"
+  >
+    <PageviewIcon />
+  </IconButton>
                     
                     {/* Edit button for pending orders */}
                     {order.orderStatus === 'pending' && (
@@ -675,14 +729,12 @@ const OrderList = () => {
         onClose={() => setOpenOrderForm(false)}
         maxWidth="xl"
         fullWidth
+        key={`order-form-dialog-${refreshKey}`} // Add this key to force re-render
       >
         <DialogContent>
           <OrderForm 
             orderId={selectedOrder?._id} 
-            onSuccess={() => {
-              fetchOrders();
-              setOpenOrderForm(false);
-            }}
+              onSuccess={handleFormSuccess}
             onCancel={() => setOpenOrderForm(false)}
           />
         </DialogContent>

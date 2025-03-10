@@ -7,20 +7,16 @@ import { roleMiddleware } from '@/lib/auth';
 export const GET = async (request, { params }) => {
   try {
     const { id } = params;
-    
     await connectDB();
-    
     const category = await Category.findById(id)
       .populate('categoryStatus')
       .populate('discountStatus');
-    
     if (!category) {
       return NextResponse.json(
         { success: false, message: 'Category not found' },
         { status: 404 }
       );
     }
-    
     return NextResponse.json({
       success: true,
       data: category
@@ -38,13 +34,22 @@ export const GET = async (request, { params }) => {
 const updateHandler = async (request, { params }) => {
   try {
     const { id } = params;
-    const { categoryName, image, parentCategory, categoryStatus, discountStatus } = await request.json();
+    const { 
+      categoryName, 
+      image, 
+      parentCategory, 
+      categoryStatus, 
+      discountStatus,
+      outOfStock,
+      outOfStockType,
+      outOfStockUntil,
+      outOfStockReason
+    } = await request.json();
     
     await connectDB();
     
     // Find category
     let category = await Category.findById(id);
-    
     if (!category) {
       return NextResponse.json(
         { success: false, message: 'Category not found' },
@@ -58,6 +63,12 @@ const updateHandler = async (request, { params }) => {
     if (parentCategory) category.parentCategory = parentCategory;
     if (categoryStatus) category.categoryStatus = categoryStatus;
     if (discountStatus) category.discountStatus = discountStatus;
+    
+    // Update out of stock fields
+    if (outOfStock !== undefined) category.outOfStock = outOfStock;
+    if (outOfStockType !== undefined) category.outOfStockType = outOfStockType;
+    if (outOfStockUntil !== undefined) category.outOfStockUntil = outOfStockUntil;
+    if (outOfStockReason !== undefined) category.outOfStockReason = outOfStockReason;
     
     category.updatedBy = request.user._id;
     category.updatedAt = Date.now();
@@ -83,22 +94,16 @@ const updateHandler = async (request, { params }) => {
 const deleteHandler = async (request, { params }) => {
   try {
     const { id } = params;
-    
     await connectDB();
-    
     const category = await Category.findById(id);
-    
     if (!category) {
       return NextResponse.json(
         { success: false, message: 'Category not found' },
         { status: 404 }
       );
     }
-    
     // TODO: Check if category has subcategories before deleting
-    
     await Category.findByIdAndDelete(id);
-    
     return NextResponse.json({
       success: true,
       message: 'Category deleted successfully'

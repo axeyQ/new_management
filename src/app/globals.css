@@ -22,3 +22,45 @@ body {
   background: var(--background);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Styles for printing */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  
+  .print-section, 
+  .print-section * {
+    visibility: visible;
+  }
+  
+  .print-section {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 80mm; /* Adjust to match your POS printer width */
+  }
+  
+  /* Hide UI elements when printing */
+  button, 
+  .MuiAppBar-root, 
+  .MuiDrawer-root,
+  .no-print {
+    display: none !important;
+  }
+}
+
+/* Print content container */
+.print-container {
+  background: white;
+  width: 80mm; /* Match your POS printer width */
+  padding: 2mm;
+  font-family: monospace;
+  font-size: 10pt;
+}
+
+/* Override any other styles that might interfere with printing */
+.print-section * {
+  box-shadow: none !important;
+  overflow: visible !important;
+}

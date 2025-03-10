@@ -13,6 +13,12 @@ import {
   Alert,
   CircularProgress,
   IconButton,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
 } from '@mui/material';
 import {
   ArrowBack as BackIcon,
@@ -22,7 +28,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import axiosWithAuth from '@/lib/axiosWithAuth';
 import toast from 'react-hot-toast';
-import DishVariants from '@/components/menu/DishVariants'; // Import the variants component
+import DishVariants from '@/components/menu/DishVariants';
 
 export default function DishDetailPage({ params }) {
   const { isAuthenticated, loading: authLoading } = useAuth();
@@ -126,11 +132,9 @@ export default function DishDetailPage({ params }) {
                 }}
               />
             )}
-
             <Typography variant="body1" gutterBottom>
               {dish.description || 'No description available.'}
             </Typography>
-
             <Box mt={2} display="flex" flexWrap="wrap" gap={1}>
               <Chip
                 label={dish.dieteryTag}
@@ -138,8 +142,8 @@ export default function DishDetailPage({ params }) {
                   dish.dieteryTag === 'veg'
                     ? 'success'
                     : dish.dieteryTag === 'non veg'
-                    ? 'error'
-                    : 'warning'
+                      ? 'error'
+                      : 'warning'
                 }
                 size="small"
               />
@@ -163,17 +167,56 @@ export default function DishDetailPage({ params }) {
               <Typography component="dd" variant="body2">
                 {dish.subCategory?.map(cat => cat.subCategoryName).join(', ') || 'None'}
               </Typography>
-
+              
               <Typography component="dt" variant="body2" fontWeight="bold">
                 Short Code:
               </Typography>
               <Typography component="dd" variant="body2">
                 {dish.shortCode || '-'}
               </Typography>
-
-              {/* Other dish details */}
+              
+              {/* Add more dish details */}
+              <Typography component="dt" variant="body2" fontWeight="bold">
+                GST Item Type:
+              </Typography>
+              <Typography component="dd" variant="body2">
+                {dish.gstItemType || '-'}
+              </Typography>
             </Box>
-
+            
+            <Divider sx={{ my: 2 }} />
+            
+            {/* Charges Information */}
+            <Typography variant="h6" gutterBottom>
+              Charges Information
+            </Typography>
+            <TableContainer component={Paper} variant="outlined" sx={{ mb: 3 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Charge Type</TableCell>
+                    <TableCell>Amount</TableCell>
+                    <TableCell>Type</TableCell>
+                    <TableCell>Applied At</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  <TableRow>
+                    <TableCell>Packaging</TableCell>
+                    <TableCell>{dish.packagingCharges?.amount || 0}</TableCell>
+                    <TableCell>{dish.packagingCharges?.type || 'fixed'}</TableCell>
+                    <TableCell>{dish.packagingCharges?.appliedAt || 'dish'}</TableCell>
+                  </TableRow>
+                  <TableRow>
+                    <TableCell>Delivery</TableCell>
+                    <TableCell>{dish.deliveryCharges?.amount || 0}</TableCell>
+                    <TableCell>{dish.deliveryCharges?.type || 'fixed'}</TableCell>
+                    <TableCell>{dish.deliveryCharges?.appliedAt || 'dish'}</TableCell>
+                  </TableRow>
+                </TableBody>
+              </Table>
+            </TableContainer>
+            
             <Divider sx={{ my: 2 }} />
             
             {/* Add the variants component here */}

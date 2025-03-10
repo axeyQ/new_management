@@ -20,6 +20,9 @@ import {
   Grid,
   InputAdornment,
   Alert,
+  RadioGroup,
+  Radio,
+  Chip
 } from '@mui/material';
 import toast from 'react-hot-toast';
 import axiosWithAuth from '@/lib/axiosWithAuth';
@@ -33,6 +36,7 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
     price: addon?.price || '',
     addonGroupId: '',
     availabilityStatus: addon?.availabilityStatus !== undefined ? addon.availabilityStatus : true,
+    dieteryTag: addon?.dieteryTag || 'veg'
   });
   const [dishes, setDishes] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -48,7 +52,6 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
       fetchMenuDetails();
     }
     fetchDishes();
-
     // If editing an addon, find which group it belongs to and set initial dish
     if (addon) {
       for (const group of addonGroups) {
@@ -56,7 +59,8 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
           setFormData(prev => ({
             ...prev,
             addonGroupId: group._id,
-            name: addon.name || ''
+            name: addon.name || '',
+            dieteryTag: addon.dieteryTag || 'veg'
           }));
           break;
         }
@@ -84,11 +88,17 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
     }
   };
 
-  // When a dish is selected, fetch its variants and price
+  // When a dish is selected, fetch its variants and update dietary tag
   useEffect(() => {
     if (formData.selectedDish) {
       fetchVariants(formData.selectedDish._id);
-      
+      // Set dietary tag from the selected dish
+      if (formData.selectedDish.dieteryTag) {
+        setFormData(prev => ({
+          ...prev,
+          dieteryTag: formData.selectedDish.dieteryTag
+        }));
+      }
       // Fetch the dish price from the menu
       if (menuId) {
         fetchDishPriceFromMenu(formData.selectedDish._id);
@@ -123,7 +133,6 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
       if (menuId) {
         url = `/api/menu/pricing?menu=${menuId}`;
       }
-      
       const res = await axiosWithAuth.get(url);
       if (res.data.success) {
         if (menuId) {
@@ -156,7 +165,8 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
       if (res.data.success) {
         setFormData(prev => ({
           ...prev,
-          selectedDish: res.data.data
+          selectedDish: res.data.data,
+          dieteryTag: res.data.data.dieteryTag || 'veg'
         }));
       }
     } catch (error) {
@@ -191,18 +201,14 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
       const res = await axiosWithAuth.get(`/api/menu/dishes/${dishId}/variants`);
       if (res.data.success) {
         setVariants(res.data.data);
-        
         // If menu is specified, fetch variant prices
         if (menuId && res.data.data.length > 0) {
           const variantIds = res.data.data.map(v => v._id);
-          
           // Fetch pricing for each variant
-          const variantPricingPromises = variantIds.map(variantId => 
+          const variantPricingPromises = variantIds.map(variantId =>
             axiosWithAuth.get(`/api/menu/pricing?menu=${menuId}&dish=${dishId}&variant=${variantId}`)
           );
-          
           const variantPricingResults = await Promise.all(variantPricingPromises);
-          
           // Update variants with pricing information
           const variantsWithPricing = res.data.data.map((variant, index) => {
             const pricingRes = variantPricingResults[index];
@@ -215,7 +221,6 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
             }
             return variant;
           });
-          
           setVariants(variantsWithPricing);
         }
       } else {
@@ -258,8 +263,9 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
       ...prev,
       selectedDish: newValue,
       selectedVariant: null,
+      // If dish is selected, inherit its dietary tag
+      dieteryTag: newValue?.dieteryTag || prev.dieteryTag,
     }));
-    
     // Price will be updated via the useEffect that runs when selectedDish changes
   };
 
@@ -268,7 +274,6 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
       ...prev,
       selectedVariant: newValue,
     }));
-    
     // If variant selected, update price
     if (newValue && menuId) {
       try {
@@ -285,6 +290,13 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
         console.error('Error fetching variant price:', error);
       }
     }
+  };
+
+  const handleDieteryTagChange = (e) => {
+    setFormData((prev) => ({
+      ...prev,
+      dieteryTag: e.target.value,
+    }));
   };
 
   const handleAddonTypeChange = (event, newValue) => {
@@ -320,38 +332,36 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
       toast.error('Please enter an add-on name');
       return;
     }
-    
     setLoading(true);
     try {
       // Prepare data for API
       const apiData = {
         addonGroupId: formData.addonGroupId,
-        price: formData.price,
         availabilityStatus: formData.availabilityStatus,
         menuId: menuId // Pass the menu ID for proper pricing
       };
-      
+
       if (addonType === 'dish-based') {
-        apiData.name = formData.selectedDish.dishName + 
+        apiData.name = formData.selectedDish.dishName +
           (formData.selectedVariant ? ` - ${formData.selectedVariant.variantName}` : '');
         apiData.dishReference = formData.selectedDish._id;
         apiData.variantReference = formData.selectedVariant ? formData.selectedVariant._id : null;
+        // Inherit dietary tag from dish, don't need to set price
+        apiData.dieteryTag = formData.selectedDish.dieteryTag;
       } else {
+        // For custom add-ons, include price and dietary tag
         apiData.name = formData.name;
-        // Leave dishReference and variantReference undefined for custom add-ons
+        apiData.price = formData.price;
+        apiData.dieteryTag = formData.dieteryTag;
       }
-      
-      const url = addon
-        ? `/api/menu/addons/${addon._id}`
-        : '/api/menu/addons';
+
+      const url = addon ? `/api/menu/addons/${addon._id}` : '/api/menu/addons';
       const method = addon ? 'put' : 'post';
-      
       const res = await axiosWithAuth[method](url, apiData);
+
       if (res.data.success) {
         toast.success(
-          addon
-            ? 'Add-on updated successfully'
-            : 'Add-on created successfully'
+          addon ? 'Add-on updated successfully' : 'Add-on created successfully'
         );
         onSuccess(res.data.data);
       } else {
@@ -396,7 +406,7 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
             <ToggleButton value="custom">Custom Add-on</ToggleButton>
           </ToggleButtonGroup>
         </Box>
-        
+
         {/* For dish-based add-ons, show dish selector */}
         {addonType === 'dish-based' && (
           <>
@@ -435,42 +445,73 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
                 )}
               />
             )}
+            {/* Display inherited dietary tag from dish - read only */}
+            {formData.selectedDish && (
+              <Box sx={{ mt: 2, mb: 2 }}>
+                <Typography variant="body2" color="text.secondary" mb={1}>
+                  Dietary Tag (inherited from dish)
+                </Typography>
+                <Chip 
+                  label={formData.dieteryTag || 'veg'}
+                  color={
+                    formData.dieteryTag === 'veg' ? 'success' : 
+                    formData.dieteryTag === 'egg' ? 'warning' : 'error'
+                  }
+                  sx={{ mt: 1 }}
+                />
+              </Box>
+            )}
           </>
         )}
-        
-        {/* For custom add-ons, show name field */}
+
+        {/* For custom add-ons, show name field and dietary tag selector */}
         {addonType === 'custom' && (
-          <TextField
-            fullWidth
-            label="Add-on Name"
-            name="name"
-            value={formData.name}
-            onChange={handleChange}
-            margin="normal"
-            required
-          />
+          <>
+            <TextField
+              fullWidth
+              label="Add-on Name"
+              name="name"
+              value={formData.name}
+              onChange={handleChange}
+              margin="normal"
+              required
+            />
+            
+            {/* Price field - only for custom add-ons */}
+            <TextField
+              fullWidth
+              label="Price"
+              name="price"
+              type="number"
+              value={formData.price}
+              onChange={handlePriceChange}
+              InputProps={{
+                startAdornment: <InputAdornment position="start">₹</InputAdornment>,
+              }}
+              margin="normal"
+              required
+              helperText="Enter the price for this add-on"
+            />
+            
+            {/* Dietary Tag selection for custom add-ons */}
+            <FormControl component="fieldset" sx={{ mt: 2, width: '100%' }}>
+              <Typography variant="body2" color="text.secondary" mb={1}>
+                Dietary Tag
+              </Typography>
+              <RadioGroup
+                row
+                name="dieteryTag"
+                value={formData.dieteryTag}
+                onChange={handleDieteryTagChange}
+              >
+                <FormControlLabel value="veg" control={<Radio color="success" />} label="Veg" />
+                <FormControlLabel value="non veg" control={<Radio color="error" />} label="Non-Veg" />
+                <FormControlLabel value="egg" control={<Radio color="warning" />} label="Egg" />
+              </RadioGroup>
+            </FormControl>
+          </>
         )}
-        
-        {/* Price field - for both custom add-ons and dish-based add-ons */}
-        <TextField
-          fullWidth
-          label="Price"
-          name="price"
-          type="number"
-          value={formData.price}
-          onChange={handlePriceChange}
-          InputProps={{
-            startAdornment: <InputAdornment position="start">₹</InputAdornment>,
-          }}
-          margin="normal"
-          required
-          helperText={
-            addonType === 'dish-based' 
-              ? "Price is automatically mapped from the menu configuration but can be adjusted" 
-              : "Enter the price for this add-on"
-          }
-        />
-        
+
         <FormControl fullWidth margin="normal">
           <InputLabel id="addon-group-label">Add-on Group *</InputLabel>
           <Select
@@ -491,7 +532,7 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
             ))}
           </Select>
         </FormControl>
-        
+
         <FormControlLabel
           control={
             <Switch
@@ -504,19 +545,20 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
           label="Available"
           sx={{ mt: 1, display: 'block' }}
         />
-        
+
         <Divider sx={{ my: 2 }} />
-        
+
         {/* Description section */}
         <Typography variant="body2" color="text.secondary" mb={2}>
           {addonType === 'dish-based' ? (
             formData.selectedDish && formData.selectedVariant ? (
               <>This add-on will be available for
-              <strong> {formData.selectedDish.dishName}</strong> -
-              <strong> {formData.selectedVariant.variantName}</strong> variant only.</>
+                <strong> {formData.selectedDish.dishName}</strong> -
+                <strong> {formData.selectedVariant.variantName}</strong>
+                variant only.</>
             ) : formData.selectedDish ? (
               <>This add-on will be available for
-              <strong> {formData.selectedDish.dishName}</strong> (all variants).</>
+                <strong> {formData.selectedDish.dishName}</strong> (all variants).</>
             ) : (
               'Select a dish to create an add-on for it.'
             )
@@ -524,7 +566,7 @@ const AddOnForm = ({ addon, addonGroups, onSuccess, onCancel, menuId }) => {
             'This is a custom add-on that is not linked to any specific dish.'
           )}
         </Typography>
-        
+
         <Box display="flex" justifyContent="flex-end" gap={2} mt={3}>
           <Button
             variant="outlined"

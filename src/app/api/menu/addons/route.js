@@ -1,4 +1,3 @@
-// src/app/api/menu/addons/route.js - Updated to support custom add-ons
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import AddOn from '@/models/AddOn';
@@ -6,6 +5,7 @@ import AddOnGroup from '@/models/AddOnGroup';
 import Dish from '@/models/Dish';
 import Variant from '@/models/Variant';
 import { roleMiddleware } from '@/lib/auth';
+import { v4 as uuidv4 } from 'uuid';
 
 // Get all addons
 export const GET = async (request) => {
@@ -68,7 +68,7 @@ export const GET = async (request) => {
           path: 'variations',
           select: 'variantName _id'
         });
-        
+      
       // For each dish with variants
       for (const dish of dishes) {
         if (dish.variations && dish.variations.length > 0) {
@@ -90,9 +90,10 @@ export const GET = async (request) => {
               const existingVariantAddon = await AddOn.findOne({
                 dishReference: dish._id,
                 variantReference: variant._id
-              }).populate('dishReference', 'dishName image dieteryTag')
-                .populate('variantReference', 'variantName');
-                
+              })
+              .populate('dishReference', 'dishName image dieteryTag')
+              .populate('variantReference', 'variantName');
+              
               if (existingVariantAddon) {
                 // Add to results if not already included
                 if (!addons.some(a => a._id.toString() === existingVariantAddon._id.toString())) {
@@ -125,7 +126,15 @@ export const GET = async (request) => {
 // Create a new addon
 const createHandler = async (request) => {
   try {
-    const { name, price, addonGroupId, availabilityStatus, dishReference, variantReference } = await request.json();
+    const { 
+      name, 
+      price, 
+      addonGroupId, 
+      availabilityStatus,
+      dishReference, 
+      variantReference,
+      dieteryTag 
+    } = await request.json();
     
     if (!name || !addonGroupId) {
       return NextResponse.json(
@@ -179,29 +188,46 @@ const createHandler = async (request) => {
       }
     }
     
-    // For dish-based add-ons, get price from the referenced dish if available
-    let addonPrice = price;
+    // For dish-based add-ons, get dietary tag from the dish
+    let addonDieteryTag = dieteryTag || 'veg';
+    if (dishReference && !dieteryTag) {
+      const dish = await Dish.findById(dishReference);
+      if (dish && dish.dieteryTag) {
+        addonDieteryTag = dish.dieteryTag;
+      }
+    }
     
-    // If this is a dish-based add-on, we could get the price from the menu in the future
-    // For now, we'll use the provided price or default to 0
-    
-    // Create new addon
-    const addon = await AddOn.create({
+    // Prepare addon data
+    const addonData = {
       name,
-      price: addonPrice || 0,
+      price: dishReference ? undefined : (price || 0),
       availabilityStatus: availabilityStatus === true || availabilityStatus === 'true',
       dishReference: dishReference || null,
-      variantReference: variantReference || null
-    });
+      variantReference: variantReference || null,
+      dieteryTag: addonDieteryTag
+    };
+    
+    // For custom add-ons (no dish reference), add a custom ID to prevent duplicate key errors
+    if (!dishReference) {
+      addonData.customId = uuidv4();
+    }
+    
+    // Create new addon
+    const addon = await AddOn.create(addonData);
     
     // Add addon to group
     addonGroup.addOns.push(addon._id);
     await addonGroup.save();
     
+    // Return populated addon
+    const populatedAddon = await AddOn.findById(addon._id)
+      .populate('dishReference', 'dishName image dieteryTag')
+      .populate('variantReference', 'variantName');
+    
     return NextResponse.json({
       success: true,
       message: 'Add-on created successfully',
-      data: addon
+      data: populatedAddon
     });
   } catch (error) {
     console.error('Error creating addon:', error);

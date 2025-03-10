@@ -4,12 +4,13 @@ const InvoiceSchema = new mongoose.Schema({
   invoiceNumber: { 
     type: String, 
     required: true, 
-    unique: true 
+    index: { unique: true, sparse: true }
   },
   salesOrder: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'SalesOrder',
-    required: true
+    required: true,
+    index: { unique: true, sparse: true }
   },
   customerDetails: {
     name: { 
@@ -202,6 +203,30 @@ const InvoiceSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
     required: true
+  }
+});
+
+InvoiceSchema.pre('save', async function(next) {
+  try {
+    // If this is a new invoice being created
+    if (this.isNew) {
+      // Check if an invoice with this number already exists
+      const existing = await this.constructor.findOne({ invoiceNumber: this.invoiceNumber });
+      if (existing) {
+        // Generate a new unique invoice number
+        const date = new Date();
+        const year = date.getFullYear().toString().substr(-2);
+        const month = (date.getMonth() + 1).toString().padStart(2, '0');
+        const day = date.getDate().toString().padStart(2, '0');
+        const random = Math.floor(Math.random() * 9999).toString().padStart(4, '0');
+        
+        // Create a unique invoice number with a random component
+        this.invoiceNumber = `INV-${year}${month}${day}-${random}`;
+      }
+    }
+    next();
+  } catch (error) {
+    next(error);
   }
 });
 

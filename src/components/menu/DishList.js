@@ -1,4 +1,3 @@
-// src/components/menu/DishList.js
 'use client';
 import React, { useState, useEffect } from 'react';
 import {
@@ -33,6 +32,9 @@ import {
   Collapse,
   CircularProgress,
   Alert,
+  Tooltip,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import {
   Edit as EditIcon,
@@ -44,32 +46,34 @@ import {
   ViewModule as GridView,
   ExpandMore,
   ExpandLess,
+  Visibility as VisibilityIcon,
 } from '@mui/icons-material';
-import axios from 'axios';
+import { useRouter } from 'next/navigation';
 import axiosWithAuth from '@/lib/axiosWithAuth';
 import toast from 'react-hot-toast';
 import DishForm from './DishForm';
-import { useRouter } from 'next/navigation';
+import InlineStockToggle from './InlineStockToggle';
 
-// Expandable Variants Row Component
-const ExpandableVariantsRow = ({ dishId, isExpanded }) => {
+// ExpandableVariantsRow Component
+const ExpandableVariantsRow = ({ dishId, isExpanded, onVariantAction }) => {
   const [variants, setVariants] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
+  const [selectedVariant, setSelectedVariant] = useState(null);
+  const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
+  const [openEditDialog, setOpenEditDialog] = useState(false);
+  const [editVariantData, setEditVariantData] = useState({
+    variantName: '',
+    description: '',
+    isAvailable: true
+  });
 
   useEffect(() => {
     const fetchVariants = async () => {
       if (!isExpanded) return; // Only fetch when expanded
-      
       setLoading(true);
       try {
-        const token = localStorage.getItem('token');
-        const response = await axios.get(`/api/menu/dishes/${dishId}/variants`, {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        });
-        
+        const response = await axiosWithAuth.get(`/api/menu/dishes/${dishId}/variants`);
         if (response.data.success) {
           setVariants(response.data.data);
         } else {
@@ -82,12 +86,116 @@ const ExpandableVariantsRow = ({ dishId, isExpanded }) => {
         setLoading(false);
       }
     };
-    
     fetchVariants();
   }, [dishId, isExpanded]);
-  
+
+  // Handler to refetch variants after an action
+  const refetchVariants = async () => {
+    try {
+      const response = await axiosWithAuth.get(`/api/menu/dishes/${dishId}/variants`);
+      if (response.data.success) {
+        setVariants(response.data.data);
+      }
+    } catch (err) {
+      console.error('Error refetching variants:', err);
+    }
+  };
+
+  // Handlers for variant actions
+  const handleViewVariant = (variant) => {
+    if (onVariantAction) {
+      onVariantAction('view', variant);
+    }
+  };
+
+  const handleEditVariant = (variant) => {
+    setSelectedVariant(variant);
+    setEditVariantData({
+      variantName: variant.variantName,
+      description: variant.description || '',
+      isAvailable: variant.isAvailable !== false
+    });
+    setOpenEditDialog(true);
+  };
+
+  const handleDeleteVariant = (variant) => {
+    setSelectedVariant(variant);
+    setOpenDeleteDialog(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    try {
+      const response = await axiosWithAuth.delete(`/api/menu/variants/${selectedVariant._id}`);
+      if (response.data.success) {
+        toast.success('Variant deleted successfully');
+        if (onVariantAction) {
+          onVariantAction('delete', selectedVariant);
+        }
+        await refetchVariants();
+        setOpenDeleteDialog(false);
+      } else {
+        toast.error(response.data.message || 'Failed to delete variant');
+      }
+    } catch (error) {
+      console.error('Error deleting variant:', error);
+      toast.error('Error deleting variant');
+    }
+  };
+
+  const handleSaveVariant = async () => {
+    if (!editVariantData.variantName) {
+      toast.error('Variant name is required');
+      return;
+    }
+    try {
+      const response = await axiosWithAuth.put(`/api/menu/variants/${selectedVariant._id}`, {
+        ...editVariantData,
+        dishReference: dishId
+      });
+      if (response.data.success) {
+        toast.success('Variant updated successfully');
+        if (onVariantAction) {
+          onVariantAction('edit', response.data.data);
+        }
+        await refetchVariants();
+        setOpenEditDialog(false);
+      } else {
+        toast.error(response.data.message || 'Failed to update variant');
+      }
+    } catch (error) {
+      console.error('Error updating variant:', error);
+      toast.error('Error updating variant');
+    }
+  };
+
+  const handleStockSuccess = (updatedVariant) => {
+    // Update variant in state
+    setVariants(variants.map(variant =>
+      variant._id === updatedVariant._id ? updatedVariant : variant
+    ));
+    if (onVariantAction) {
+      onVariantAction('stock', updatedVariant);
+    }
+  };
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setEditVariantData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  };
+
+  const handleSwitchChange = (e) => {
+    const { name, checked } = e.target;
+    setEditVariantData(prev => ({
+      ...prev,
+      [name]: checked
+    }));
+  };
+
   if (!isExpanded) return null;
-  
+
   if (loading) {
     return (
       <Box display="flex" justifyContent="center" p={2}>
@@ -95,7 +203,7 @@ const ExpandableVariantsRow = ({ dishId, isExpanded }) => {
       </Box>
     );
   }
-  
+
   if (error) {
     return (
       <Box p={2}>
@@ -103,7 +211,7 @@ const ExpandableVariantsRow = ({ dishId, isExpanded }) => {
       </Box>
     );
   }
-  
+
   if (variants.length === 0) {
     return (
       <Box p={2}>
@@ -113,7 +221,7 @@ const ExpandableVariantsRow = ({ dishId, isExpanded }) => {
       </Box>
     );
   }
-  
+
   return (
     <Box sx={{ py: 2, px: 4 }}>
       <Typography variant="subtitle2" gutterBottom component="div">
@@ -126,25 +234,144 @@ const ExpandableVariantsRow = ({ dishId, isExpanded }) => {
               <TableCell>Variant Name</TableCell>
               <TableCell>Description</TableCell>
               <TableCell>Status</TableCell>
+              <TableCell align="center">Actions</TableCell>
             </TableRow>
           </TableHead>
           <TableBody>
             {variants.map((variant) => (
-              <TableRow key={variant._id}>
-                <TableCell>{variant.variantName}</TableCell>
+              <TableRow
+                key={variant._id}
+                sx={{
+                  opacity: variant.stockStatus?.isOutOfStock ? 0.7 : 1
+                }}
+              >
+                <TableCell>
+                  {variant.variantName}
+                  {variant.stockStatus && variant.stockStatus.isOutOfStock && (
+                    <Chip
+                      label="Out of Stock"
+                      color="error"
+                      size="small"
+                      sx={{ ml: 1 }}
+                    />
+                  )}
+                </TableCell>
                 <TableCell>{variant.description || '-'}</TableCell>
                 <TableCell>
-                  <Chip
-                    label={variant.isAvailable !== false ? 'Available' : 'Unavailable'}
-                    color={variant.isAvailable !== false ? 'success' : 'default'}
-                    size="small"
+                  <InlineStockToggle
+                    item={variant}
+                    itemType="variant"
+                    onSuccess={handleStockSuccess}
                   />
+                </TableCell>
+                <TableCell align="center">
+                  <Tooltip title="View Details">
+                    <IconButton
+                      size="small"
+                      color="info"
+                      onClick={() => handleViewVariant(variant)}
+                    >
+                      <VisibilityIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Edit">
+                    <IconButton
+                      size="small"
+                      color="primary"
+                      onClick={() => handleEditVariant(variant)}
+                    >
+                      <EditIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title="Delete">
+                    <IconButton
+                      size="small"
+                      color="error"
+                      onClick={() => handleDeleteVariant(variant)}
+                    >
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
                 </TableCell>
               </TableRow>
             ))}
           </TableBody>
         </Table>
       </TableContainer>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={openDeleteDialog}
+        onClose={() => setOpenDeleteDialog(false)}
+      >
+        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            Are you sure you want to delete the variant
+            &quot;{selectedVariant?.variantName}&quot;?
+            This action cannot be undone.
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenDeleteDialog(false)}>
+            Cancel
+          </Button>
+          <Button onClick={handleDeleteConfirm} color="error">
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Edit Variant Dialog */}
+      <Dialog
+        open={openEditDialog}
+        onClose={() => setOpenEditDialog(false)}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Edit Variant</DialogTitle>
+        <DialogContent>
+          <TextField
+            fullWidth
+            margin="normal"
+            label="Variant Name"
+            name="variantName"
+            value={editVariantData.variantName}
+            onChange={handleInputChange}
+            required
+          />
+          <TextField
+            fullWidth
+            margin="normal"
+            label="Description"
+            name="description"
+            value={editVariantData.description}
+            onChange={handleInputChange}
+            multiline
+            rows={2}
+          />
+          <FormControlLabel
+            control={
+              <Switch
+                checked={editVariantData.isAvailable}
+                onChange={handleSwitchChange}
+                name="isAvailable"
+                color="primary"
+              />
+            }
+            label="Available"
+            sx={{ mt: 2 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenEditDialog(false)}>
+            Cancel
+          </Button>
+          <Button onClick={handleSaveVariant} color="primary" variant="contained">
+            Save Changes
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };
@@ -162,6 +389,7 @@ const DishList = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [viewMode, setViewMode] = useState('list');
   const [expandedDish, setExpandedDish] = useState(null);
+  const [filteredDishes, setFilteredDishes] = useState([]);
 
   useEffect(() => {
     fetchSubCategories();
@@ -174,6 +402,36 @@ const DishList = () => {
 
   const handleExpandDish = (dishId) => {
     setExpandedDish(expandedDish === dishId ? null : dishId);
+  };
+
+  // Handler for viewing dish details
+  const handleViewDish = (dishId) => {
+    router.push(`/dashboard/menu/dishes/${dishId}`);
+  };
+
+  // Handler for stock status changes
+  const handleStockSuccess = (updatedDish) => {
+    // Update the dish in the list
+    const updatedDishes = dishes.map(dish =>
+      dish._id === updatedDish._id ? updatedDish : dish
+    );
+    setDishes(updatedDishes);
+    // Also update filtered dishes
+    setFilteredDishes(
+      filteredDishes.map(dish =>
+        dish._id === updatedDish._id ? updatedDish : dish
+      )
+    );
+  };
+
+  // Handler for variant actions
+  const handleVariantAction = async (action, variant) => {
+    if (action === 'view') {
+      toast.info(`Viewing variant: ${variant.variantName}`);
+    } else if (action === 'edit' || action === 'delete' || action === 'stock') {
+      // After variant is modified, we may need to refresh the dish data
+      await fetchDishes();
+    }
   };
 
   const fetchSubCategories = async () => {
@@ -199,6 +457,7 @@ const DishList = () => {
       const res = await axiosWithAuth.get(url);
       if (res.data.success) {
         setDishes(res.data.data);
+        setFilteredDishes(res.data.data);
       } else {
         toast.error(res.data.message || 'Failed to fetch dishes');
       }
@@ -260,9 +519,18 @@ const DishList = () => {
     setSearchTerm(event.target.value);
   };
 
-  const filteredDishes = dishes.filter(dish =>
-    dish.dishName.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter dishes based on search and category
+  useEffect(() => {
+    if (!dishes || dishes.length === 0) return;
+    let filtered = [...dishes];
+    if (searchTerm) {
+      const lowerSearchTerm = searchTerm.toLowerCase();
+      filtered = filtered.filter(dish =>
+        dish.dishName.toLowerCase().includes(lowerSearchTerm)
+      );
+    }
+    setFilteredDishes(filtered);
+  }, [searchTerm, dishes]);
 
   const getDietaryTagColor = (tag) => {
     switch (tag) {
@@ -290,6 +558,7 @@ const DishList = () => {
           Add Dish
         </Button>
       </Box>
+
       <Box mb={3}>
         <Grid container spacing={2} alignItems="center">
           <Grid item xs={12} md={4}>
@@ -342,6 +611,7 @@ const DishList = () => {
           </Grid>
         </Grid>
       </Box>
+
       {loading ? (
         <Box display="flex" justifyContent="center" p={4}>
           <CircularProgress />
@@ -358,14 +628,19 @@ const DishList = () => {
                 <TableCell>Name</TableCell>
                 <TableCell>Category</TableCell>
                 <TableCell>Dietary</TableCell>
+                <TableCell>Status</TableCell>
                 <TableCell>Image</TableCell>
-                <TableCell width="150">Actions</TableCell>
+                <TableCell width="170">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {filteredDishes.map((dish) => (
                 <React.Fragment key={dish._id}>
-                  <TableRow>
+                  <TableRow
+                    sx={{
+                      opacity: dish.stockStatus?.isOutOfStock ? 0.7 : 1
+                    }}
+                  >
                     <TableCell>
                       <Box display="flex" alignItems="center">
                         <IconButton
@@ -375,7 +650,9 @@ const DishList = () => {
                           {expandedDish === dish._id ? <ExpandLess /> : <ExpandMore />}
                         </IconButton>
                         <DishIcon sx={{ mr: 1, color: 'primary.main' }} />
-                        <Typography variant="body1">{dish.dishName}</Typography>
+                        <Typography variant="body1">
+                          {dish.dishName}
+                        </Typography>
                       </Box>
                       {dish.description && (
                         <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block', maxWidth: 250 }}>
@@ -399,6 +676,29 @@ const DishList = () => {
                         color={getDietaryTagColor(dish.dieteryTag)}
                         size="small"
                       />
+                      {dish.dieteryTag === 'non veg' && dish.meatTypes && dish.meatTypes.length > 0 && (
+                        <Box sx={{ mt: 0.5, display: 'flex', flexWrap: 'wrap', gap: 0.5, maxWidth: 200 }}>
+                          {dish.meatTypes.slice(0, 3).map(type => (
+                            <Chip
+                              key={type}
+                              label={type}
+                              color="default"
+                              size="small"
+                              variant="outlined"
+                            />
+                          ))}
+                          {dish.meatTypes.length > 3 && (
+                            <Tooltip title={dish.meatTypes.slice(3).join(', ')}>
+                              <Chip
+                                label={`+${dish.meatTypes.length - 3} more`}
+                                color="default"
+                                size="small"
+                                variant="outlined"
+                              />
+                            </Tooltip>
+                          )}
+                        </Box>
+                      )}
                       {dish.specialTag && (
                         <Chip
                           label={dish.specialTag}
@@ -409,12 +709,25 @@ const DishList = () => {
                       )}
                     </TableCell>
                     <TableCell>
+                      <InlineStockToggle
+                        item={dish}
+                        itemType="dish"
+                        onSuccess={handleStockSuccess}
+                      />
+                    </TableCell>
+                    <TableCell>
                       {dish.image ? (
                         <Box
                           component="img"
                           src={dish.image}
                           alt={dish.dishName}
-                          sx={{ width: 50, height: 50, objectFit: 'cover', borderRadius: 1 }}
+                          sx={{
+                            width: 50,
+                            height: 50,
+                            objectFit: 'cover',
+                            borderRadius: 1,
+                            opacity: dish.stockStatus?.isOutOfStock ? 0.5 : 1
+                          }}
                           onError={(e) => {
                             e.target.src = 'https://via.placeholder.com/50?text=No+Image';
                           }}
@@ -424,30 +737,46 @@ const DishList = () => {
                       )}
                     </TableCell>
                     <TableCell>
-                      <IconButton
-                        color="primary"
-                        onClick={() => handleOpenForm(dish)}
-                        size="small"
-                      >
-                        <EditIcon />
-                      </IconButton>
-                      <IconButton
-                        color="error"
-                        onClick={() => handleDeleteClick(dish)}
-                        size="small"
-                      >
-                        <DeleteIcon />
-                      </IconButton>
+                      <Box display="flex" flexWrap="nowrap">
+                        <Tooltip title="View Details">
+                          <IconButton
+                            color="info"
+                            onClick={() => handleViewDish(dish._id)}
+                            size="small"
+                          >
+                            <VisibilityIcon />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Edit">
+                          <IconButton
+                            color="primary"
+                            onClick={() => handleOpenForm(dish)}
+                            size="small"
+                          >
+                            <EditIcon />
+                          </IconButton>
+                        </Tooltip>
+                        <Tooltip title="Delete">
+                          <IconButton
+                            color="error"
+                            onClick={() => handleDeleteClick(dish)}
+                            size="small"
+                          >
+                            <DeleteIcon />
+                          </IconButton>
+                        </Tooltip>
+                      </Box>
                     </TableCell>
                   </TableRow>
                   {/* Expandable Variants Row */}
                   {expandedDish === dish._id && (
                     <TableRow>
-                      <TableCell colSpan={5} sx={{ py: 0 }}>
+                      <TableCell colSpan={6} sx={{ py: 0 }}>
                         <Collapse in={expandedDish === dish._id} timeout="auto" unmountOnExit>
-                          <ExpandableVariantsRow 
-                            dishId={dish._id} 
-                            isExpanded={expandedDish === dish._id} 
+                          <ExpandableVariantsRow
+                            dishId={dish._id}
+                            isExpanded={expandedDish === dish._id}
+                            onVariantAction={handleVariantAction}
                           />
                         </Collapse>
                       </TableCell>
@@ -462,7 +791,12 @@ const DishList = () => {
         <Grid container spacing={3}>
           {filteredDishes.map((dish) => (
             <Grid item xs={12} sm={6} md={4} lg={3} key={dish._id}>
-              <Card sx={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
+              <Card sx={{
+                height: '100%',
+                display: 'flex',
+                flexDirection: 'column',
+                opacity: dish.stockStatus?.isOutOfStock ? 0.7 : 1
+              }}>
                 <CardMedia
                   component="img"
                   height="140"
@@ -476,18 +810,42 @@ const DishList = () => {
                   <Typography gutterBottom variant="h6" component="div">
                     {dish.dishName}
                   </Typography>
-                  <Box display="flex" mb={1}>
+                  <Box display="flex" flexWrap="wrap" mb={1}>
                     <Chip
                       label={dish.dieteryTag}
                       color={getDietaryTagColor(dish.dieteryTag)}
                       size="small"
-                      sx={{ mr: 0.5 }}
+                      sx={{ mr: 0.5, mb: 0.5 }}
                     />
+                    {dish.dieteryTag === 'non veg' && dish.meatTypes && dish.meatTypes.length > 0 && (
+                      dish.meatTypes.slice(0, 2).map(type => (
+                        <Chip
+                          key={type}
+                          label={type}
+                          color="default"
+                          variant="outlined"
+                          size="small"
+                          sx={{ mr: 0.5, mb: 0.5 }}
+                        />
+                      ))
+                    )}
+                    {dish.dieteryTag === 'non veg' && dish.meatTypes && dish.meatTypes.length > 2 && (
+                      <Tooltip title={dish.meatTypes.slice(2).join(', ')}>
+                        <Chip
+                          label={`+${dish.meatTypes.length - 2} more`}
+                          color="default"
+                          size="small"
+                          variant="outlined"
+                          sx={{ mb: 0.5 }}
+                        />
+                      </Tooltip>
+                    )}
                     {dish.specialTag && (
                       <Chip
                         label={dish.specialTag}
                         color="secondary"
                         size="small"
+                        sx={{ mb: 0.5 }}
                       />
                     )}
                   </Box>
@@ -510,16 +868,56 @@ const DishList = () => {
                     ))}
                   </Box>
                 </CardContent>
+                <Box display="flex" justifyContent="space-between" alignItems="center" p={2}
+                  pt={0}>
+                  <Typography variant="body2">Status:</Typography>
+                  <InlineStockToggle
+                    item={dish}
+                    itemType="dish"
+                    onSuccess={handleStockSuccess}
+                  />
+                </Box>
                 <CardActions>
-                  <Button size="small" onClick={() => handleOpenForm(dish)}>Edit</Button>
-                  <Button size="small" color="error" onClick={() => handleDeleteClick(dish)}>Delete</Button>
-                  <Button size="small" onClick={() => handleExpandDish(dish._id)}>
-                    {expandedDish === dish._id ? 'Hide Variants' : 'Show Variants'}
+                  <Button
+                    size="small"
+                    startIcon={<VisibilityIcon />}
+                    onClick={() => handleViewDish(dish._id)}
+                  >
+                    View
+                  </Button>
+                  <Button
+                    size="small"
+                    startIcon={<EditIcon />}
+                    onClick={() => handleOpenForm(dish)}
+                  >
+                    Edit
+                  </Button>
+                  <Button
+                    size="small"
+                    color="error"
+                    startIcon={<DeleteIcon />}
+                    onClick={() => handleDeleteClick(dish)}
+                  >
+                    Delete
                   </Button>
                 </CardActions>
+                <Box px={2} pb={2}>
+                  <Button
+                    size="small"
+                    onClick={() => handleExpandDish(dish._id)}
+                    fullWidth
+                    variant="outlined"
+                  >
+                    {expandedDish === dish._id ? 'Hide Variants' : 'Show Variants'}
+                  </Button>
+                </Box>
                 {expandedDish === dish._id && (
                   <Box p={2}>
-                    <ExpandableVariantsRow dishId={dish._id} isExpanded={true} />
+                    <ExpandableVariantsRow
+                      dishId={dish._id}
+                      isExpanded={true}
+                      onVariantAction={handleVariantAction}
+                    />
                   </Box>
                 )}
               </Card>
@@ -527,6 +925,7 @@ const DishList = () => {
           ))}
         </Grid>
       )}
+
       {/* Dish Form Dialog */}
       <Dialog
         open={openForm}
@@ -542,6 +941,7 @@ const DishList = () => {
           />
         </DialogContent>
       </Dialog>
+
       {/* Delete Confirmation Dialog */}
       <Dialog
         open={openDeleteDialog}

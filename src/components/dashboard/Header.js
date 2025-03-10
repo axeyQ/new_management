@@ -17,6 +17,7 @@ import {
 } from '@mui/icons-material';
 import { useState } from 'react';
 import { useAuth } from '@/context/AuthContext';
+import SyncStatus from '../common/SyncStatus';
 
 const Header = ({ open, toggleDrawer }) => {
   const { user, logout } = useAuth();
@@ -62,6 +63,9 @@ const Header = ({ open, toggleDrawer }) => {
         </Typography>
 
         <Box sx={{ display: 'flex', alignItems: 'center' }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', ml: 'auto', mr: 2 }}>
+  <SyncStatus />
+</Box>
           <IconButton color="inherit" sx={{ mr: 1 }}>
             <NotificationsIcon />
           </IconButton>

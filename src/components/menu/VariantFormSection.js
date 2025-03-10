@@ -20,12 +20,18 @@ import {
   DialogActions,
   FormControlLabel,
   Switch,
+  Chip,
+  Tooltip,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Delete as DeleteIcon,
   Edit as EditIcon,
+  Visibility as VisibilityIcon,
 } from '@mui/icons-material';
+import toast from 'react-hot-toast';
+import axiosWithAuth from '@/lib/axiosWithAuth';
+import StockToggleButton from './StockToggleButton';
 
 const VariantFormSection = ({ variants, onChange, dishId }) => {
   const [openDialog, setOpenDialog] = useState(false);
@@ -35,6 +41,10 @@ const VariantFormSection = ({ variants, onChange, dishId }) => {
     description: '',
     isAvailable: true
   });
+  const [openDeleteDialog, setOpenDeleteDialog] = useState(false);
+  const [variantToDelete, setVariantToDelete] = useState(null);
+  const [openViewDialog, setOpenViewDialog] = useState(false);
+  const [variantToView, setVariantToView] = useState(null);
 
   const handleOpenDialog = (variant = null) => {
     if (variant) {
@@ -78,14 +88,14 @@ const VariantFormSection = ({ variants, onChange, dishId }) => {
 
   const handleVariantSave = () => {
     if (!variantData.variantName) {
-      return; // Validate required fields
+      toast.error('Variant name is required');
+      return;
     }
-
+    
     let updatedVariants;
-
     if (currentVariant) {
       // Update existing variant
-      updatedVariants = variants.map(v => 
+      updatedVariants = variants.map(v =>
         v._id === currentVariant._id ? { ...v, ...variantData } : v
       );
     } else {
@@ -97,30 +107,62 @@ const VariantFormSection = ({ variants, onChange, dishId }) => {
       };
       updatedVariants = [...variants, newVariant];
     }
-
+    
     onChange(updatedVariants);
     handleCloseDialog();
+    toast.success(currentVariant ? 'Variant updated' : 'Variant added');
   };
 
-  const handleDeleteVariant = (variantId) => {
-    const updatedVariants = variants.filter(v => v._id !== variantId);
+  const handleOpenDeleteDialog = (variant) => {
+    setVariantToDelete(variant);
+    setOpenDeleteDialog(true);
+  };
+
+  const handleCloseDeleteDialog = () => {
+    setOpenDeleteDialog(false);
+    setVariantToDelete(null);
+  };
+
+  const handleDeleteVariant = () => {
+    const updatedVariants = variants.filter(v => v._id !== variantToDelete._id);
     onChange(updatedVariants);
+    handleCloseDeleteDialog();
+    toast.success('Variant removed');
+  };
+
+  const handleOpenViewDialog = (variant) => {
+    setVariantToView(variant);
+    setOpenViewDialog(true);
+  };
+
+  const handleCloseViewDialog = () => {
+    setOpenViewDialog(false);
+    setVariantToView(null);
+  };
+
+  // Handler for stock status changes
+  const handleStockSuccess = (updatedVariant) => {
+    // Update the variant in the variants array
+    const updatedVariants = variants.map(variant =>
+      variant._id === updatedVariant._id ? updatedVariant : variant
+    );
+    onChange(updatedVariants);
+    toast.success(`Variant stock status updated`);
   };
 
   return (
     <Box mt={4}>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
         <Typography variant="h6">Variants</Typography>
-        <Button 
-          startIcon={<AddIcon />} 
-          variant="outlined" 
+        <Button
+          startIcon={<AddIcon />}
+          variant="outlined"
           size="small"
           onClick={() => handleOpenDialog()}
         >
           Add Variant
         </Button>
       </Box>
-
       {variants.length > 0 ? (
         <TableContainer component={Paper} variant="outlined">
           <Table size="small">
@@ -134,27 +176,82 @@ const VariantFormSection = ({ variants, onChange, dishId }) => {
             </TableHead>
             <TableBody>
               {variants.map((variant) => (
-                <TableRow key={variant._id}>
-                  <TableCell>{variant.variantName}</TableCell>
+                <TableRow key={variant._id} sx={{
+                  opacity: variant.stockStatus?.isOutOfStock ? 0.7 : 1
+                }}>
+                  <TableCell>
+                    {variant.variantName}
+                    {variant.stockStatus && variant.stockStatus.isOutOfStock && (
+                      <Chip
+                        label="Out of Stock"
+                        color="error"
+                        size="small"
+                        sx={{ ml: 1 }}
+                      />
+                    )}
+                  </TableCell>
                   <TableCell>{variant.description || '-'}</TableCell>
                   <TableCell>
-                    {variant.isAvailable !== false ? 'Available' : 'Unavailable'}
+                    {variant.stockStatus && variant.stockStatus.isOutOfStock ? (
+                      <Chip
+                        label="Out of Stock"
+                        color="error"
+                        size="small"
+                      />
+                    ) : (
+                      variant.isAvailable !== false ? (
+                        <Chip
+                          label="Available"
+                          color="success"
+                          size="small"
+                        />
+                      ) : (
+                        <Chip
+                          label="Unavailable"
+                          color="default"
+                          size="small"
+                        />
+                      )
+                    )}
                   </TableCell>
                   <TableCell align="center">
-                    <IconButton 
-                      size="small" 
-                      color="primary"
-                      onClick={() => handleOpenDialog(variant)}
-                    >
-                      <EditIcon fontSize="small" />
-                    </IconButton>
-                    <IconButton 
-                      size="small" 
-                      color="error"
-                      onClick={() => handleDeleteVariant(variant._id)}
-                    >
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
+                    <Tooltip title="View Details">
+                      <IconButton
+                        size="small"
+                        color="info"
+                        onClick={() => handleOpenViewDialog(variant)}
+                      >
+                        <VisibilityIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Edit">
+                      <IconButton
+                        size="small"
+                        color="primary"
+                        onClick={() => handleOpenDialog(variant)}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    
+                    {/* Stock Toggle Button - only show for real variants, not temporary ones */}
+                    {variant._id && !variant._id.toString().startsWith('temp-') && (
+                      <StockToggleButton 
+                        item={variant} 
+                        itemType="variant" 
+                        onSuccess={handleStockSuccess} 
+                      />
+                    )}
+                    
+                    <Tooltip title="Delete">
+                      <IconButton
+                        size="small"
+                        color="error"
+                        onClick={() => handleOpenDeleteDialog(variant)}
+                      >
+                        <DeleteIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
                   </TableCell>
                 </TableRow>
               ))}
@@ -166,7 +263,7 @@ const VariantFormSection = ({ variants, onChange, dishId }) => {
           No variants added yet. Add variants to provide different options for this dish.
         </Typography>
       )}
-
+      
       {/* Variant Edit Dialog */}
       <Dialog open={openDialog} onClose={handleCloseDialog} maxWidth="sm" fullWidth>
         <DialogTitle>{currentVariant ? 'Edit Variant' : 'Add Variant'}</DialogTitle>
@@ -210,6 +307,81 @@ const VariantFormSection = ({ variants, onChange, dishId }) => {
           </Button>
         </DialogActions>
       </Dialog>
+      
+      {/* Delete Confirmation Dialog */}
+      <Dialog
+        open={openDeleteDialog}
+        onClose={handleCloseDeleteDialog}
+      >
+        <DialogTitle>Confirm Delete</DialogTitle>
+        <DialogContent>
+          <Typography>
+            Are you sure you want to delete the variant &quot;{variantToDelete?.variantName}&quot;?
+          </Typography>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={handleCloseDeleteDialog}>Cancel</Button>
+          <Button onClick={handleDeleteVariant} color="error">
+            Delete
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* View Variant Dialog */}
+      {variantToView && (
+        <Dialog
+          open={openViewDialog}
+          onClose={handleCloseViewDialog}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>{variantToView.variantName}</DialogTitle>
+          <DialogContent>
+            <Box sx={{ mt: 2 }}>
+              <Typography variant="subtitle1" gutterBottom>Description</Typography>
+              <Typography variant="body2" paragraph>
+                {variantToView.description || 'No description available'}
+              </Typography>
+              
+              <Typography variant="subtitle1" gutterBottom>Availability</Typography>
+              <Box display="flex" alignItems="center" mb={2}>
+                <Chip
+                  label={variantToView.stockStatus?.isOutOfStock ? "Out of Stock" : "In Stock"}
+                  color={variantToView.stockStatus?.isOutOfStock ? "error" : "success"}
+                  sx={{ mr: 1 }}
+                />
+                {variantToView.isAvailable === false && (
+                  <Chip
+                    label="Unavailable"
+                    color="default"
+                  />
+                )}
+              </Box>
+              
+              {variantToView._id && !variantToView._id.toString().startsWith('temp-') && (
+                <>
+                  <Typography variant="subtitle1" gutterBottom>ID</Typography>
+                  <Typography variant="body2" paragraph>
+                    {variantToView._id}
+                  </Typography>
+                </>
+              )}
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={handleCloseViewDialog}>Close</Button>
+            <Button 
+              onClick={() => {
+                handleCloseViewDialog();
+                handleOpenDialog(variantToView);
+              }} 
+              color="primary"
+            >
+              Edit
+            </Button>
+          </DialogActions>
+        </Dialog>
+      )}
     </Box>
   );
 };

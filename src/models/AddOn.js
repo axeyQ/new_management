@@ -1,4 +1,5 @@
 import mongoose from 'mongoose';
+import { v4 as uuidv4 } from 'uuid';
 
 const AddOnSchema = new mongoose.Schema({
   name: {
@@ -6,53 +7,63 @@ const AddOnSchema = new mongoose.Schema({
     required: true
   },
   price: {
-    type: Number,
-    default: 0
+    type: Number
   },
   availabilityStatus: {
-    type: Boolean,
-    default: true
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Status'
   },
   dishReference: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Dish'
+    ref: 'Dish',
+    sparse: true
   },
-  // Add variant reference
   variantReference: {
     type: mongoose.Schema.Types.ObjectId,
-    ref: 'Variant'
+    ref: 'Variant',
+    sparse: true
   },
-  addonGroup: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'AddOnGroup'
+  customId: {
+    type: String,
+    default: function() {
+      // Only set a custom ID if this is a custom add-on (no dish reference)
+      if (!this.dishReference) {
+        return uuidv4();
+      }
+      return null;
+    },
+    sparse: true
   },
-  createdAt: {
-    type: Date,
-    default: Date.now
-  },
-  createdBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
-  },
-  updatedAt: {
-    type: Date,
-    default: Date.now
-  },
-  updatedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User'
+  dieteryTag: {
+    type: String,
+    enum: ['veg', 'non veg', 'egg'],
+    default: 'veg',
+    required: true
   }
 });
 
-// Compound index for dish + variant references to make sure we don't have duplicates
-AddOnSchema.index({ 
-  dishReference: 1, 
-  variantReference: 1 
-}, { 
-  unique: true, 
-  partialFilterExpression: { dishReference: { $exists: true } }
+// Create a unique compound index that includes customId for custom add-ons
+AddOnSchema.index(
+  { 
+    dishReference: 1, 
+    variantReference: 1, 
+    customId: 1 
+  }, 
+  { 
+    unique: true,
+    // Make the index sparse so that null values don't conflict
+    sparse: true 
+  }
+);
+
+// Pre-save hook to ensure proper indexing
+AddOnSchema.pre('save', function(next) {
+  // If this is a custom add-on (no dish reference), ensure customId is set
+  if (!this.dishReference && !this.customId) {
+    this.customId = uuidv4();
+  }
+  next();
 });
 
 const AddOn = mongoose.models.AddOn || mongoose.model('AddOn', AddOnSchema);
-
 export default AddOn;

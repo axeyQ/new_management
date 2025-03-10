@@ -1,5 +1,6 @@
+// src/components/orders/OrderForm.js
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   TextField,
   Button,
@@ -38,7 +39,6 @@ import {
   Card,
   CardContent,
 } from '@mui/material';
-
 import {
   Add as AddIcon,
   Remove as RemoveIcon,
@@ -52,8 +52,8 @@ import {
   LocalDining as DiningIcon,
   Fastfood as FastfoodIcon,
   Search as SearchIcon,
+  BugReport as BugIcon,
 } from '@mui/icons-material';
-
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
@@ -67,13 +67,16 @@ const paymentMethods = [
   { id: 'ZomatoPay', label: 'Zomato Pay' },
 ];
 
-const OrderForm = ({ orderId, onSuccess, onCancel }) => {
+const OrderForm = ({ orderId, onSuccess, onCancel, menuId }) => {
   const router = useRouter();
   const { user } = useAuth();
   const isEditMode = !!orderId;
   const [loading, setLoading] = useState(false);
   const [initialized, setInitialized] = useState(false);
-  
+  const [debugInfo, setDebugInfo] = useState({});
+  const [showDebug, setShowDebug] = useState(false);
+  const menusRequestId = useRef(0); // To track the latest request
+
   // Order data
   const [orderData, setOrderData] = useState({
     orderMode: 'Dine-in',
@@ -111,7 +114,7 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
     totalAmount: 0,
     menu: '', // Added menu field
   });
-  
+
   // Reference data
   const [tables, setTables] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -119,7 +122,10 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   const [dishes, setDishes] = useState([]);
   const [customers, setCustomers] = useState([]);
   const [menus, setMenus] = useState([]); // Added menus state
-  
+  const [loadingMenus, setLoadingMenus] = useState(false);
+  const [menuError, setMenuError] = useState(null);
+  const [openDebugDialog, setOpenDebugDialog] = useState(false);
+
   // UI state
   const [selectedCategory, setSelectedCategory] = useState('');
   const [selectedSubCategory, setSelectedSubCategory] = useState('');
@@ -128,12 +134,12 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
   const [openPaymentDialog, setOpenPaymentDialog] = useState(false);
   const [openCustomerDialog, setOpenCustomerDialog] = useState(false);
   const [openDiscountDialog, setOpenDiscountDialog] = useState(false);
-  
+
   // Add-ons state
   const [openAddonsDialog, setOpenAddonsDialog] = useState(false);
   const [selectedItemIndex, setSelectedItemIndex] = useState(null);
   const [availableAddons, setAvailableAddons] = useState([]);
-  
+
   // Load data
   useEffect(() => {
     const initializeData = async () => {
@@ -146,28 +152,30 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
           fetchCustomers(),
           fetchMenus(),
         ]);
-        
         if (isEditMode) {
           await fetchOrder();
         }
-        
         setInitialized(true);
       } catch (error) {
         console.error('Error initializing data:', error);
         toast.error('Error loading data');
+        setDebugInfo(prev => ({
+          ...prev,
+          initError: error.message,
+          initStack: error.stack
+        }));
       } finally {
         setLoading(false);
       }
     };
-    
     initializeData();
   }, [isEditMode, orderId]);
-  
+
   // Update filtered dishes when search or category changes
   useEffect(() => {
     filterDishes();
   }, [searchTerm, selectedCategory, selectedSubCategory, dishes]);
-  
+
   // Recalculate totals when items, discounts, or charges change
   useEffect(() => {
     if (initialized) {
@@ -181,7 +189,7 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
     orderData.packagingCharge,
     initialized
   ]);
-  
+
   // Load reference data
   const fetchTables = async () => {
     try {
@@ -191,9 +199,13 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       }
     } catch (error) {
       console.error('Error fetching tables:', error);
+      setDebugInfo(prev => ({
+        ...prev,
+        tablesError: error.message
+      }));
     }
   };
-  
+
   const fetchCategories = async () => {
     try {
       const res = await axiosWithAuth.get('/api/menu/categories');
@@ -202,13 +214,17 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       }
     } catch (error) {
       console.error('Error fetching categories:', error);
+      setDebugInfo(prev => ({
+        ...prev,
+        categoriesError: error.message
+      }));
     }
   };
-  
+
   const fetchSubCategories = async (categoryId) => {
     try {
-      const url = categoryId 
-        ? `/api/menu/subcategories?category=${categoryId}` 
+      const url = categoryId
+        ? `/api/menu/subcategories?category=${categoryId}`
         : '/api/menu/subcategories';
       const res = await axiosWithAuth.get(url);
       if (res.data.success) {
@@ -216,9 +232,13 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       }
     } catch (error) {
       console.error('Error fetching subcategories:', error);
+      setDebugInfo(prev => ({
+        ...prev,
+        subCategoriesError: error.message
+      }));
     }
   };
-  
+
   const fetchDishes = async () => {
     try {
       const res = await axiosWithAuth.get('/api/menu/dishes');
@@ -228,57 +248,76 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       }
     } catch (error) {
       console.error('Error fetching dishes:', error);
+      setDebugInfo(prev => ({
+        ...prev,
+        dishesError: error.message
+      }));
     }
   };
-  
-  const fetchMenus = async () => {
+
+  const fetchMenus = async (modeOverride) => {
+    setLoadingMenus(true);
     try {
-      // Only fetch menus specifically for the current order mode
-      const url = orderData.orderMode 
-        ? `/api/menu/menus?mode=${orderData.orderMode}&strictMode=true` 
-        : '/api/menu/menus';
-      
-      const res = await axiosWithAuth.get(url);
-      if (res.data.success) {
-        setMenus(res.data.data);
+        // Fetch menus specifically for the current order mode with strictMode=true
+        const mode = modeOverride || orderData.orderMode;
+        const url = mode
+          ? `/api/menu/menus?mode=${mode}&strictMode=true`
+          : '/api/menu/menus';
         
-        // If there's a default menu for this mode, select it
-        const defaultMenu = res.data.data.find(menu => menu.isDefault);
-        if (defaultMenu) {
-          setOrderData(prev => ({
-            ...prev,
-            menu: defaultMenu._id
-          }));
-          
-          // When menu changes, refresh items with new pricing
-          fetchMenuItems(defaultMenu._id);
-        } else if (res.data.data.length > 0) {
-          // If no default but menus exist, select the first one
-          setOrderData(prev => ({
-            ...prev,
-            menu: res.data.data[0]._id
-          }));
-          
-          fetchMenuItems(res.data.data[0]._id);
+        console.log('Fetching menus from:', url);
+        const res = await axiosWithAuth.get(url);
+        
+        console.log('API Response:', res);
+        
+        if (res.data.success) {
+            setMenus(res.data.data);
+            console.log('Fetched menus:', res.data.data);
+            
+            if (res.data.data.length === 0) {
+                console.log('Warning: No menus found for mode:', orderData.orderMode);
+                toast.warning(`No menus found for ${orderData.orderMode} mode`);
+            }
+            
+            // If there's a default menu for this mode, select it
+            const defaultMenu = res.data.data.find(menu => menu.isDefault);
+            if (defaultMenu) {
+                console.log('Using default menu:', defaultMenu.name);
+                setOrderData(prev => ({
+                    ...prev,
+                    menu: defaultMenu._id
+                }));
+                // When menu changes, refresh items with new pricing
+                fetchMenuItems(defaultMenu._id);
+            } else if (res.data.data.length > 0) {
+                // If no default but menus exist, select the first one
+                console.log('No default menu found, using first menu:', res.data.data[0].name);
+                setOrderData(prev => ({
+                    ...prev,
+                    menu: res.data.data[0]._id
+                }));
+                fetchMenuItems(res.data.data[0]._id);
+            } else {
+                // Clear menu selection if no menus available
+                console.log('No menus available, clearing menu selection');
+                setOrderData(prev => ({
+                    ...prev,
+                    menu: ''
+                }));
+            }
         } else {
-          // Clear menu selection if no menus available
-          setOrderData(prev => ({
-            ...prev,
-            menu: ''
-          }));
+            console.error('Menu API returned error:', res.data.message);
+            toast.error('Failed to load menus: ' + res.data.message);
         }
-      } else {
-        toast.error('Failed to load menus');
-      }
     } catch (error) {
-      console.error('Error fetching menus:', error);
-      toast.error('Error loading menus');
+        console.error('Error fetching menus:', error);
+        console.error('Error details:', error.response?.data || error.message);
+        toast.error('Error loading menus: ' + (error.response?.data?.message || error.message));
+    } finally {
+        setLoadingMenus(false);
     }
-  };
-  
+};
   const fetchMenuItems = async (menuId) => {
     if (!menuId) return;
-    
     try {
       const res = await axiosWithAuth.get(`/api/menu/pricing?menu=${menuId}`);
       if (res.data.success) {
@@ -294,27 +333,38 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
           menuPricingId: item._id,
           isAvailable: item.isAvailable
         }));
-        
         // Filter out unavailable items
         const availableDishes = dishesWithPricing.filter(dish => dish.isAvailable !== false);
-        
         setDishes(availableDishes);
+        setDebugInfo(prev => ({
+          ...prev,
+          menuItems: {
+            menuId,
+            totalItems: res.data.data.length,
+            availableItems: availableDishes.length
+          }
+        }));
         filterDishes(); // Refresh filtered dishes
       }
     } catch (error) {
       console.error('Error fetching menu items:', error);
+      setDebugInfo(prev => ({
+        ...prev,
+        menuItemsError: {
+          menuId,
+          error: error.message
+        }
+      }));
     }
   };
-  
+
   const fetchDishAddons = async (dishId, variantId = null) => {
     if (!dishId || !orderData.menu) return [];
-    
     try {
       let url = `/api/menu/addon-pricing/dish?menuId=${orderData.menu}&dishId=${dishId}`;
       if (variantId) {
         url += `&variantId=${variantId}`;
       }
-      
       const res = await axiosWithAuth.get(url);
       if (res.data.success) {
         return res.data.data;
@@ -322,10 +372,18 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       return [];
     } catch (error) {
       console.error('Error fetching dish add-ons:', error);
+      setDebugInfo(prev => ({
+        ...prev,
+        dishAddonsError: {
+          dishId,
+          variantId,
+          error: error.message
+        }
+      }));
       return [];
     }
   };
-  
+
   const fetchCustomers = async () => {
     try {
       // For demo, use mock data since customer API might not be implemented yet
@@ -338,12 +396,19 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       console.error('Error fetching customers:', error);
     }
   };
-  
+
   const fetchOrder = async () => {
     try {
       const res = await axiosWithAuth.get(`/api/orders/${orderId}`);
       if (res.data.success) {
         setOrderData(res.data.data);
+        setDebugInfo(prev => ({
+          ...prev,
+          orderDetails: {
+            orderMode: res.data.data.orderMode,
+            menu: res.data.data.menu
+          }
+        }));
       } else {
         toast.error('Failed to load order');
         router.push('/dashboard/orders');
@@ -351,42 +416,40 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
     } catch (error) {
       console.error('Error fetching order:', error);
       toast.error('Error loading order');
+      setDebugInfo(prev => ({
+        ...prev,
+        orderError: error.message
+      }));
       router.push('/dashboard/orders');
     }
   };
-  
+
   // Filter dishes based on search and category
   const filterDishes = () => {
     if (!dishes || dishes.length === 0) return;
-    
     let filtered = [...dishes];
-    
     if (selectedCategory) {
       // First filter by category
       const subCatsInCategory = subCategories.filter(
         sc => sc.category._id === selectedCategory
       ).map(sc => sc._id);
-      
       filtered = filtered.filter(dish => {
         // Handle both string IDs and object references
-        const dishSubCats = (dish.subCategory || []).map(sc => 
+        const dishSubCats = (dish.subCategory || []).map(sc =>
           typeof sc === 'string' ? sc : sc._id
         );
-        
         return dishSubCats.some(id => subCatsInCategory.includes(id));
       });
     }
-    
     if (selectedSubCategory) {
       // Then filter by subcategory if selected
-      filtered = filtered.filter(dish => 
+      filtered = filtered.filter(dish =>
         (dish.subCategory || []).some(sc => {
           const scId = typeof sc === 'string' ? sc : sc._id;
           return scId === selectedSubCategory;
         })
       );
     }
-    
     if (searchTerm) {
       // Finally filter by search term
       const lowerSearchTerm = searchTerm.toLowerCase();
@@ -394,46 +457,63 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
         dish.dishName.toLowerCase().includes(lowerSearchTerm)
       );
     }
-    
     setFilteredDishes(filtered);
   };
-  
+
   // Handle form field changes
   const handleOrderModeChange = (e) => {
     const mode = e.target.value;
+    console.log(`Order mode changed to: ${mode}`);
+    
     setOrderData(prev => ({
       ...prev,
       orderMode: mode,
       // Reset table if not dine-in
-      table: mode === 'Dine-in' ? prev.table : '',
+      table: mode === 'Dine-in' ? prev.table : null,
       // Add delivery charge if delivery
       deliveryCharge: mode.includes('Delivery') ? 40 : 0,
       // Add packaging charge if takeaway or delivery
       packagingCharge: mode.includes('Takeaway') || mode.includes('Delivery') ? 20 : 0,
+      // Clear menu selection as we'll fetch new menus based on the mode
+      menu: ''
     }));
     
+    // Reset dishes when order mode changes
+    setDishes([]);
+    setFilteredDishes([]);
+    
     // Update menus when order mode changes
-    fetchMenus();
+    // Adding a small delay to avoid race conditions
+    
+      fetchMenus(mode);
   };
-  
+
   const handleTableChange = (e) => {
     setOrderData(prev => ({
       ...prev,
       table: e.target.value
     }));
   };
-  
+
   const handleMenuChange = (e) => {
     const menuId = e.target.value;
+    console.log(`Menu changed to: ${menuId}`);
+    
     setOrderData(prev => ({
       ...prev,
       menu: menuId
     }));
     
     // Load menu items with pricing
-    fetchMenuItems(menuId);
+    if (menuId) {
+      fetchMenuItems(menuId);
+    } else {
+      // Clear dishes if no menu selected
+      setDishes([]);
+      setFilteredDishes([]);
+    }
   };
-  
+
   const handleCustomerChange = (field, value) => {
     setOrderData(prev => ({
       ...prev,
@@ -443,7 +523,7 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       }
     }));
   };
-  
+
   const handleSelectCustomer = (customer) => {
     setOrderData(prev => ({
       ...prev,
@@ -456,36 +536,34 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
     }));
     setOpenCustomerDialog(false);
   };
-  
+
   const handleCategoryChange = (e) => {
     const categoryId = e.target.value;
     setSelectedCategory(categoryId);
     setSelectedSubCategory('');
     fetchSubCategories(categoryId);
   };
-  
+
   const handleSubCategoryChange = (e) => {
     setSelectedSubCategory(e.target.value);
   };
-  
+
   const handleSearchChange = (e) => {
     setSearchTerm(e.target.value);
   };
-  
+
   // Item management
   const addDishToOrder = async (dish) => {
     if (!orderData.menu) {
       toast.error('Please select a menu first');
       return;
     }
-    
     // Check if dish already exists in order
     const existingItemIndex = orderData.itemsSold.findIndex(
-      item => item.dish === dish._id && 
-        (item.variant === (dish.variant?._id || null) || 
-         (!item.variant && !dish.variant))
+      item => item.dish === dish._id &&
+      (item.variant === (dish.variant?._id || null) ||
+        (!item.variant && !dish.variant))
     );
-    
     if (existingItemIndex >= 0) {
       // Update quantity if dish already exists
       const updatedItems = [...orderData.itemsSold];
@@ -497,7 +575,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
     } else {
       // Fetch available add-ons for this dish
       const dishAddons = await fetchDishAddons(dish._id, dish.variant?._id);
-      
       // Add new item
       const newItem = {
         dish: dish._id,
@@ -510,51 +587,46 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
         availableAddons: dishAddons, // Store available add-ons
         notes: ''
       };
-      
       setOrderData(prev => ({
         ...prev,
         itemsSold: [...prev.itemsSold, newItem]
       }));
     }
   };
-  
+
   const updateItemQuantity = (index, change) => {
     const updatedItems = [...orderData.itemsSold];
     const newQuantity = updatedItems[index].quantity + change;
-    
     if (newQuantity <= 0) {
       // Remove item if quantity is zero or negative
       updatedItems.splice(index, 1);
     } else {
       updatedItems[index].quantity = newQuantity;
     }
-    
     setOrderData(prev => ({
       ...prev,
       itemsSold: updatedItems
     }));
   };
-  
+
   const removeItem = (index) => {
     const updatedItems = [...orderData.itemsSold];
     updatedItems.splice(index, 1);
-    
     setOrderData(prev => ({
       ...prev,
       itemsSold: updatedItems
     }));
   };
-  
+
   const updateItemNote = (index, note) => {
     const updatedItems = [...orderData.itemsSold];
     updatedItems[index].notes = note;
-    
     setOrderData(prev => ({
       ...prev,
       itemsSold: updatedItems
     }));
   };
-  
+
   // Add-on management
   const handleAddAddonClick = (itemIndex) => {
     const item = orderData.itemsSold[itemIndex];
@@ -562,43 +634,38 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
     setAvailableAddons(item.availableAddons || []);
     setOpenAddonsDialog(true);
   };
-  
+
   const addAddonToItem = (itemIndex, addon) => {
     const updatedItems = [...orderData.itemsSold];
-    
     // Check if this addon is already added
     const existingAddonIndex = updatedItems[itemIndex].addOns.findIndex(
       a => a.addOn === addon._id
     );
-    
     if (existingAddonIndex >= 0) {
       toast.info('This add-on is already added to the item');
       return;
     }
-    
     // Add the addon
     updatedItems[itemIndex].addOns.push({
       addOn: addon._id,
       name: addon.name,
       price: addon.price
     });
-    
     setOrderData(prev => ({
       ...prev,
       itemsSold: updatedItems
     }));
   };
-  
+
   const removeAddonFromItem = (itemIndex, addonIndex) => {
     const updatedItems = [...orderData.itemsSold];
     updatedItems[itemIndex].addOns.splice(addonIndex, 1);
-    
     setOrderData(prev => ({
       ...prev,
       itemsSold: updatedItems
     }));
   };
-  
+
   // Discount handling
   const handleDiscountTypeChange = (e) => {
     const discountType = e.target.value;
@@ -610,10 +677,9 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       }
     }));
   };
-  
+
   const handleDiscountValueChange = (e) => {
     const value = parseFloat(e.target.value) || 0;
-    
     if (orderData.discount.discountType === 'percentage') {
       setOrderData(prev => ({
         ...prev,
@@ -633,7 +699,7 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       }));
     }
   };
-  
+
   const handleDiscountReasonChange = (e) => {
     setOrderData(prev => ({
       ...prev,
@@ -643,61 +709,56 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       }
     }));
   };
-  
+
   // Payment handling
   const handlePaymentMethodChange = (index, method) => {
     const updatedPayments = [...orderData.payment];
     updatedPayments[index].method = method;
-    
     setOrderData(prev => ({
       ...prev,
       payment: updatedPayments
     }));
   };
-  
+
   const handlePaymentAmountChange = (index, amount) => {
     const updatedPayments = [...orderData.payment];
     updatedPayments[index].amount = parseFloat(amount) || 0;
-    
     setOrderData(prev => ({
       ...prev,
       payment: updatedPayments
     }));
   };
-  
+
   const addPaymentMethod = () => {
     setOrderData(prev => ({
       ...prev,
       payment: [...prev.payment, { method: 'Cash', amount: 0 }]
     }));
   };
-  
+
   const removePaymentMethod = (index) => {
     const updatedPayments = [...orderData.payment];
     updatedPayments.splice(index, 1);
-    
     setOrderData(prev => ({
       ...prev,
       payment: updatedPayments
     }));
   };
-  
+
   // Calculation functions
   const calculateTotals = () => {
     // Calculate subtotal
     const subtotal = orderData.itemsSold.reduce((sum, item) => {
       let itemTotal = item.price * item.quantity;
-      
-      // Add addon prices
+      // Add addon prices if any
       if (item.addOns && item.addOns.length > 0) {
         item.addOns.forEach(addon => {
           itemTotal += addon.price || 0;
         });
       }
-      
       return sum + itemTotal;
     }, 0);
-    
+
     // Calculate taxes
     const taxes = orderData.taxDetails.map(tax => {
       const taxAmount = (subtotal * tax.taxRate) / 100;
@@ -706,9 +767,8 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
         taxAmount
       };
     });
-    
     const totalTax = taxes.reduce((sum, tax) => sum + tax.taxAmount, 0);
-    
+
     // Calculate discount
     let discountValue = 0;
     if (orderData.discount.discountType === 'percentage') {
@@ -716,17 +776,16 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
     } else {
       discountValue = orderData.discount.discountValue;
     }
-    
+
     // Calculate total
-    const total = subtotal + totalTax + orderData.deliveryCharge + 
-                  orderData.packagingCharge - discountValue;
-    
+    const total = subtotal + totalTax + orderData.deliveryCharge + orderData.packagingCharge - discountValue;
+
     // Update payment amount if only one payment method
     let updatedPayment = [...orderData.payment];
     if (updatedPayment.length === 1) {
       updatedPayment[0].amount = total;
     }
-    
+
     // Update order data with calculations
     setOrderData(prev => ({
       ...prev,
@@ -741,9 +800,11 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       payment: updatedPayment
     }));
   };
-  
+
   // Form submission
-  const handleSubmit = async () => {
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    
     // Validate form
     if (!orderData.customer.name || !orderData.customer.phone) {
       toast.error('Customer name and phone are required');
@@ -759,6 +820,28 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       toast.error('Please select a table for dine-in orders');
       return;
     }
+    if (orderData.orderMode === 'Zomato') {
+      // Initialize with default values if not already set
+      if (!orderData.zomatoOrderDetails) {
+        const now = new Date();
+        const thirtyMinutesLater = new Date(now.getTime() + 30 * 60000);
+        const sixtyMinutesLater = new Date(now.getTime() + 60 * 60000);
+        
+        orderData.zomatoOrderDetails = {
+          zomatoOrderId: `ZOM-${Math.floor(100000 + Math.random() * 900000)}`, // Random 6-digit ID
+          zomatoStatus: 'placed',
+          estimatedReadyTime: thirtyMinutesLater.toISOString(),
+          estimatedDeliveryTime: sixtyMinutesLater.toISOString(),
+          timeline: [{
+            status: 'placed',
+            timestamp: now.toISOString(),
+            note: 'Order placed via Zomato'
+          }]
+        };
+        
+        console.log('Initialized Zomato order details:', orderData.zomatoOrderDetails);
+      }
+    }
     
     if (orderData.itemsSold.length === 0) {
       toast.error('Please add at least one item to the order');
@@ -772,14 +855,19 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
       return;
     }
     
-    setLoading(true);
+    // Make sure table is not an empty string
+    if (orderData.table === '') {
+      orderData.table = null;
+    }
     
+    setLoading(true);
     try {
+      console.log('Submitting order data:', JSON.stringify(orderData, null, 2));
       const method = isEditMode ? 'put' : 'post';
       const url = isEditMode ? `/api/orders/${orderId}` : '/api/orders';
-      
       const res = await axiosWithAuth[method](url, orderData);
       
+      console.log('Order submission response:', res);
       if (res.data.success) {
         toast.success(
           isEditMode ? 'Order updated successfully' : 'Order created successfully'
@@ -788,6 +876,12 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
         // Create KOT
         if (!isEditMode) {
           try {
+            // Generate temporary identifiers for KOT
+            const now = new Date();
+            const dateStr = now.toISOString().split('T')[0].replace(/-/g, '');
+            const timeStr = now.getTime().toString().slice(-6);
+            const randomToken = Math.floor(1000 + Math.random() * 9000); // 4-digit random number
+            
             const kotData = {
               salesOrder: res.data.data._id,
               items: res.data.data.itemsSold.map(item => ({
@@ -802,10 +896,22 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                 })) || [],
                 notes: item.notes
               })),
-              kotStatus: 'pending'
+              orderMode: res.data.data.orderMode,
+              table: res.data.data.table,
+              customer: {
+                name: res.data.data.customer.name,
+                phone: res.data.data.customer.phone
+              },
+              kotStatus: 'pending',
+              // Add required fields for KOT
+              kotTokenNum: randomToken.toString(),
+              refNum: res.data.data.refNum || `REF-${dateStr}-${timeStr}`,
+              kotFinalId: `KF-${dateStr}-${randomToken}`,
+              kotInvoiceId: `KOT-${dateStr}-${randomToken}`
             };
             
-            await axiosWithAuth.post('/api/orders/kot', kotData);
+            const kotResponse = await axiosWithAuth.post('/api/orders/kot', kotData);
+            console.log('KOT creation response:', kotResponse.data);
           } catch (error) {
             console.error('Error creating KOT:', error);
           }
@@ -815,7 +921,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
             const invoiceData = {
               salesOrder: res.data.data._id
             };
-            
             await axiosWithAuth.post('/api/orders/invoice', invoiceData);
           } catch (error) {
             console.error('Error creating invoice:', error);
@@ -823,26 +928,42 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
         }
         
         if (onSuccess) {
-          onSuccess();
+          console.log('Calling onSuccess callback from OrderForm');
+          // Pass the created/updated order to the callback
+          onSuccess(res.data.data);
         } else {
           router.push('/dashboard/orders');
         }
       } else {
         toast.error(res.data.message || 'An error occurred');
+        console.error('Order submission error response:', res.data);
       }
     } catch (error) {
       console.error('Error submitting order:', error);
+      console.error('Error details:', error.response?.data || error.message);
       toast.error(error.response?.data?.message || 'An error occurred');
     } finally {
       setLoading(false);
     }
   };
-  
+
   return (
     <Box>
       <Typography variant="h5" gutterBottom>
         {isEditMode ? 'Edit Order' : 'Create New Order'}
       </Typography>
+      
+      {/* Debug Button */}
+      <Box position="absolute" right="10px" top="10px">
+        <IconButton
+          color="primary"
+          onClick={() => setOpenDebugDialog(true)}
+          title="Debug Information"
+        >
+          <BugIcon />
+        </IconButton>
+      </Box>
+      
       <Grid container spacing={3}>
         {/* Left column: Order details & Items */}
         <Grid item xs={12} md={8}>
@@ -869,7 +990,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                   </Select>
                 </FormControl>
               </Grid>
-              
               <Grid item xs={12} sm={6}>
                 <FormControl fullWidth margin="normal">
                   <InputLabel id="menu-label">Menu</InputLabel>
@@ -879,20 +999,30 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                     onChange={handleMenuChange}
                     label="Menu"
                     required
-                    disabled={isEditMode}
+                    disabled={isEditMode || loadingMenus}
                   >
                     <MenuItem value="">
                       <em>Select a menu</em>
                     </MenuItem>
                     {menus.map((menu) => (
                       <MenuItem key={menu._id} value={menu._id}>
-                        {menu.name}
+                        {menu.name} ({menu.orderMode})
                       </MenuItem>
                     ))}
                   </Select>
+                  {loadingMenus && <CircularProgress size={24} sx={{ ml: 1 }} />}
                 </FormControl>
+                {menuError && (
+                  <Alert severity="error" sx={{ mt: 1 }}>
+                    {menuError}
+                  </Alert>
+                )}
+                {menus.length === 0 && !loadingMenus && !menuError && (
+                  <Alert severity="warning" sx={{ mt: 1 }}>
+                    No menus available for {orderData.orderMode}
+                  </Alert>
+                )}
               </Grid>
-              
               {orderData.orderMode === 'Dine-in' && (
                 <Grid item xs={12} sm={6}>
                   <FormControl fullWidth margin="normal">
@@ -918,7 +1048,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                   </FormControl>
                 </Grid>
               )}
-              
               {orderData.orderMode === 'Dine-in' && (
                 <Grid item xs={12} sm={6}>
                   <TextField
@@ -937,7 +1066,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
               )}
             </Grid>
           </Paper>
-          
           <Paper sx={{ p: 2, mb: 3 }}>
             <Box display="flex" justifyContent="space-between" alignItems="center" mb={2}>
               <Typography variant="h6">Customer Information</Typography>
@@ -975,7 +1103,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                   margin="normal"
                 />
               </Grid>
-              
               {(orderData.orderMode === 'Delivery' || orderData.orderMode === 'Direct Order-Delivery') && (
                 <Grid item xs={12}>
                   <TextField
@@ -992,7 +1119,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
               )}
             </Grid>
           </Paper>
-          
           <Paper sx={{ p: 2, mb: 3 }}>
             <Typography variant="h6" gutterBottom>Order Items</Typography>
             {/* Item selection interface */}
@@ -1051,7 +1177,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                 />
               </Grid>
             </Grid>
-            
             {/* Dish selection */}
             {filteredDishes.length > 0 ? (
               <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mb: 4 }}>
@@ -1075,9 +1200,7 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                 </Typography>
               </Box>
             )}
-            
             <Divider sx={{ my: 2 }} />
-            
             {/* Order items list */}
             {orderData.itemsSold.length > 0 ? (
               <TableContainer>
@@ -1099,7 +1222,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                             {item.dishName}
                             {item.variantName && ` - ${item.variantName}`}
                           </Typography>
-                          
                           {/* Add-ons display */}
                           {item.addOns && item.addOns.length > 0 && (
                             <Box mt={0.5}>
@@ -1114,7 +1236,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                               ))}
                             </Box>
                           )}
-                          
                           {/* Add-on button */}
                           <Button
                             size="small"
@@ -1125,7 +1246,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                           >
                             Add-on
                           </Button>
-                          
                           {item.notes && (
                             <Typography variant="caption" color="text.secondary" display="block">
                               Note: {item.notes}
@@ -1151,9 +1271,9 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                         </TableCell>
                         <TableCell align="right">₹{item.price.toFixed(2)}</TableCell>
                         <TableCell align="right">
-                          ₹{((item.price * item.quantity) + 
-                             (item.addOns ? item.addOns.reduce((sum, addon) => sum + addon.price, 0) : 0)
-                            ).toFixed(2)}
+                          ₹{((item.price * item.quantity) +
+                            (item.addOns ? item.addOns.reduce((sum, addon) => sum + addon.price, 0) : 0)
+                          ).toFixed(2)}
                         </TableCell>
                         <TableCell align="center">
                           <IconButton
@@ -1193,7 +1313,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
             )}
           </Paper>
         </Grid>
-        
         {/* Right column: Order summary & Payment */}
         <Grid item xs={12} md={4}>
           <Card sx={{ mb: 3 }}>
@@ -1206,7 +1325,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                     ₹{orderData.subtotalAmount.toFixed(2)}
                   </Typography>
                 </ListItem>
-                
                 {orderData.taxDetails.map((tax, index) => (
                   <ListItem key={index} dense>
                     <ListItemText
@@ -1218,7 +1336,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                     </Typography>
                   </ListItem>
                 ))}
-                
                 {orderData.discount.discountValue > 0 && (
                   <ListItem>
                     <ListItemText
@@ -1234,7 +1351,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                     </Typography>
                   </ListItem>
                 )}
-                
                 {orderData.deliveryCharge > 0 && (
                   <ListItem>
                     <ListItemText primary="Delivery Charge" />
@@ -1243,7 +1359,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                     </Typography>
                   </ListItem>
                 )}
-                
                 {orderData.packagingCharge > 0 && (
                   <ListItem>
                     <ListItemText primary="Packaging Charge" />
@@ -1253,16 +1368,13 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                   </ListItem>
                 )}
               </List>
-              
               <Divider sx={{ my: 2 }} />
-              
               <Box display="flex" justifyContent="space-between" alignItems="center">
                 <Typography variant="h6">Total</Typography>
                 <Typography variant="h6">
                   ₹{orderData.totalAmount.toFixed(2)}
                 </Typography>
               </Box>
-              
               <Button
                 fullWidth
                 variant="outlined"
@@ -1277,7 +1389,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
               </Button>
             </CardContent>
           </Card>
-          
           <Card>
             <CardHeader
               title="Payment Details"
@@ -1306,16 +1417,13 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                   </Typography>
                 </Box>
               ))}
-              
               <Divider sx={{ my: 2 }} />
-              
               <Box display="flex" justifyContent="space-between" alignItems="center">
                 <Typography variant="body1">Total Paid:</Typography>
                 <Typography variant="body1">
                   ₹{orderData.payment.reduce((sum, p) => sum + p.amount, 0).toFixed(2)}
                 </Typography>
               </Box>
-              
               <Box sx={{ mt: 3 }}>
                 <Button
                   fullWidth
@@ -1347,7 +1455,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
           </Card>
         </Grid>
       </Grid>
-      
       {/* Customer Selection Dialog */}
       <Dialog
         open={openCustomerDialog}
@@ -1392,7 +1499,142 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
         </DialogActions>
       </Dialog>
       
-      {/* Discount Dialog */}
+      {/* Debug Information Dialog */}
+      <Dialog
+        open={openDebugDialog}
+        onClose={() => setOpenDebugDialog(false)}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>
+          Debug Information
+          <IconButton
+            onClick={() => setOpenDebugDialog(false)}
+            sx={{ position: 'absolute', right: 8, top: 8 }}
+          >
+            <CancelIcon />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent>
+          <Box sx={{ mb: 3 }}>
+            <Typography variant="h6" gutterBottom>Current State</Typography>
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={6}>
+                <Paper sx={{ p: 2 }}>
+                  <Typography variant="subtitle1">Order Mode: {orderData.orderMode}</Typography>
+                  <Typography variant="subtitle1">Selected Menu: {orderData.menu || 'None'}</Typography>
+                  <Typography variant="subtitle1">Menu Count: {menus.length}</Typography>
+                  <Typography variant="subtitle1">Menu Request ID: {menusRequestId.current}</Typography>
+                  <Typography variant="subtitle1">Loading Menus: {loadingMenus ? 'Yes' : 'No'}</Typography>
+                </Paper>
+              </Grid>
+              <Grid item xs={12} md={6}>
+                <Paper sx={{ p: 2 }}>
+                  <Typography variant="subtitle1">Menu Error: {menuError || 'None'}</Typography>
+                  <Typography variant="subtitle1">Dish Count: {dishes.length}</Typography>
+                  <Typography variant="subtitle1">Filtered Dishes: {filteredDishes.length}</Typography>
+                </Paper>
+              </Grid>
+            </Grid>
+          </Box>
+          
+          <Typography variant="h6" gutterBottom>Available Menus</Typography>
+          <TableContainer component={Paper} sx={{ mb: 3 }}>
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell>ID</TableCell>
+                  <TableCell>Name</TableCell>
+                  <TableCell>Order Mode</TableCell>
+                  <TableCell>Is Default</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {menus.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={4} align="center">No menus available</TableCell>
+                  </TableRow>
+                ) : (
+                  menus.map(menu => (
+                    <TableRow key={menu._id}>
+                      <TableCell>{menu._id}</TableCell>
+                      <TableCell>{menu.name}</TableCell>
+                      <TableCell>{menu.orderMode}</TableCell>
+                      <TableCell>{menu.isDefault ? 'Yes' : 'No'}</TableCell>
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </TableContainer>
+          
+          <Typography variant="h6" gutterBottom>API Information</Typography>
+          <Paper sx={{ p: 2, mb: 3 }}>
+            <Typography variant="subtitle2">Debug Information:</Typography>
+            <Box component="pre" sx={{ 
+              maxHeight: 300, 
+              overflow: 'auto', 
+              p: 2, 
+              bgcolor: 'black', 
+              color: 'lightgreen', 
+              borderRadius: 1 
+            }}>
+              {JSON.stringify(debugInfo, null, 2)}
+            </Box>
+          </Paper>
+          
+          <Typography variant="h6" gutterBottom>Troubleshooting</Typography>
+          <Paper sx={{ p: 2 }}>
+            <Typography variant="subtitle2" gutterBottom>1. Check if the API endpoint is implemented</Typography>
+            <Typography variant="body2" paragraph>
+              Make sure you have created the necessary API files in your project:
+              <br />- src/app/api/menu/menus/route.js
+              <br />- src/app/api/menu/menus/[id]/route.js
+            </Typography>
+            
+            <Typography variant="subtitle2" gutterBottom>2. Check your database</Typography>
+            <Typography variant="body2" paragraph>
+              Ensure your Menu documents in MongoDB have the correct orderMode values. They should exactly match the values from the dropdown:
+              <br />- Dine-in
+              <br />- Takeaway
+              <br />- Delivery
+              <br />- Direct Order-TableQR
+              <br />- Direct Order-Takeaway
+              <br />- Direct Order-Delivery
+              <br />- Zomato
+            </Typography>
+            
+            <Typography variant="subtitle2" gutterBottom>3. Check for race conditions</Typography>
+            <Typography variant="body2" paragraph>
+              Switching order modes rapidly might cause issues. The code now includes a system to handle this.
+            </Typography>
+            
+            <Typography variant="subtitle2" gutterBottom>4. Test the API manually</Typography>
+            <Typography variant="body2">
+              Try directly visiting:<br />
+              /api/menu/menus?mode=Dine-in&strictMode=true<br />
+              /api/menu/menus?mode=Takeaway&strictMode=true<br />
+              /api/menu/menus?mode=Delivery&strictMode=true
+            </Typography>
+          </Paper>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setOpenDebugDialog(false)}>Close</Button>
+          <Button 
+            onClick={() => {
+              // Re-fetch menus
+              fetchMenus();
+              toast.success("Refreshing menus...");
+            }}
+            variant="contained"
+            color="primary"
+          >
+            Refresh Menus
+          </Button>
+        </DialogActions>
+      </Dialog>
+      
+      {/* Other dialogs */}
       <Dialog
         open={openDiscountDialog}
         onClose={() => setOpenDiscountDialog(false)}
@@ -1413,7 +1655,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
               <MenuItem value="fixed">Fixed Amount</MenuItem>
             </Select>
           </FormControl>
-          
           <TextField
             fullWidth
             label={orderData.discount.discountType === 'percentage' ? 'Percentage' : 'Amount'}
@@ -1431,7 +1672,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
             }}
             margin="normal"
           />
-          
           <TextField
             fullWidth
             label="Reason (Optional)"
@@ -1469,8 +1709,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
           </Button>
         </DialogActions>
       </Dialog>
-      
-      {/* Payment Dialog */}
       <Dialog
         open={openPaymentDialog}
         onClose={() => setOpenPaymentDialog(false)}
@@ -1482,7 +1720,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
           <Typography variant="body2" gutterBottom>
             Total Amount: ₹{orderData.totalAmount.toFixed(2)}
           </Typography>
-          
           {orderData.payment.map((payment, index) => (
             <Box
               key={index}
@@ -1509,7 +1746,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                   ))}
                 </Select>
               </FormControl>
-              
               <TextField
                 label="Amount"
                 type="number"
@@ -1521,7 +1757,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                 sx={{ width: 150 }}
                 size="small"
               />
-              
               {orderData.payment.length > 1 && (
                 <IconButton
                   color="error"
@@ -1532,7 +1767,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
               )}
             </Box>
           ))}
-          
           <Button
             startIcon={<AddIcon />}
             onClick={addPaymentMethod}
@@ -1540,7 +1774,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
           >
             Add Payment Method
           </Button>
-          
           <Box sx={{ mt: 2 }}>
             <Typography variant="body2">
               Total Paid: ₹{orderData.payment.reduce((sum, p) => sum + p.amount, 0).toFixed(2)}
@@ -1583,8 +1816,6 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
           </Button>
         </DialogActions>
       </Dialog>
-      
-      {/* Add-ons Dialog */}
       <Dialog
         open={openAddonsDialog}
         onClose={() => setOpenAddonsDialog(false)}
@@ -1605,9 +1836,9 @@ const OrderForm = ({ orderId, onSuccess, onCancel }) => {
                     addAddonToItem(selectedItemIndex, addon);
                     setOpenAddonsDialog(false);
                   }}>
-                    <ListItemText 
-                      primary={addon.name} 
-                      secondary={`₹${addon.price.toFixed(2)}`} 
+                    <ListItemText
+                      primary={addon.name}
+                      secondary={`₹${addon.price.toFixed(2)}`}
                     />
                   </ListItemButton>
                 </ListItem>

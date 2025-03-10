@@ -4,49 +4,21 @@ import SalesOrder from '@/models/SalesOrder';
 import { authMiddleware } from '@/lib/auth';
 
 // Get all orders with optional filters
-export const GET = authMiddleware(async (request) => {
+export const GET = authMiddleware(async (request, { params }) => {
   try {
     await connectDB();
+    const { id } = params;
     
-    // Get query parameters
-    const url = new URL(request.url);
-    const orderMode = url.searchParams.get('mode');
-    const status = url.searchParams.get('status');
-    const startDate = url.searchParams.get('startDate');
-    const endDate = url.searchParams.get('endDate');
-    const limit = parseInt(url.searchParams.get('limit') || '50');
-    const page = parseInt(url.searchParams.get('page') || '1');
+    console.log(`API: Fetching order with ID: ${id}`);
     
-    // Build query based on filters
-    let query = {};
-    
-    if (orderMode) {
-      query.orderMode = orderMode;
+    if (!id) {
+      return NextResponse.json(
+        { success: false, message: 'Order ID is required' },
+        { status: 400 }
+      );
     }
-    
-    if (status) {
-      query.orderStatus = status;
-    }
-    
-    if (startDate && endDate) {
-      query.orderDateTime = {
-        $gte: new Date(startDate),
-        $lte: new Date(endDate)
-      };
-    } else if (startDate) {
-      query.orderDateTime = { $gte: new Date(startDate) };
-    } else if (endDate) {
-      query.orderDateTime = { $lte: new Date(endDate) };
-    }
-    
-    // Calculate pagination
-    const skip = (page - 1) * limit;
-    
-    // Fetch orders with pagination
-    const orders = await SalesOrder.find(query)
-      .sort({ orderDateTime: -1 })
-      .skip(skip)
-      .limit(limit)
+
+    const order = await SalesOrder.findById(id)
       .populate('table')
       .populate({
         path: 'itemsSold.dish',
@@ -64,22 +36,24 @@ export const GET = authMiddleware(async (request) => {
         path: 'staff.biller',
         select: 'username'
       });
-    
-    // Get total count for pagination
-    const total = await SalesOrder.countDocuments(query);
-    
+
+    if (!order) {
+      console.log(`API: Order with ID ${id} not found`);
+      return NextResponse.json(
+        { success: false, message: 'Order not found' },
+        { status: 404 }
+      );
+    }
+
+    console.log(`API: Successfully retrieved order ${id}`);
     return NextResponse.json({
       success: true,
-      count: orders.length,
-      total,
-      page,
-      totalPages: Math.ceil(total / limit),
-      data: orders
+      data: order
     });
   } catch (error) {
-    console.error('Error fetching orders:', error);
+    console.error('API Error fetching order:', error);
     return NextResponse.json(
-      { success: false, message: 'Server error' },
+      { success: false, message: `Server error: ${error.message}` },
       { status: 500 }
     );
   }
@@ -230,4 +204,105 @@ const createHandler = async (request) => {
 };
 
 // Only authenticated users can create orders
-export const POST = authMiddleware(createHandler);
+export const PUT = authMiddleware(async (request, { params }) => {
+  try {
+    await connectDB();
+    const { id } = params;
+    
+    console.log(`API: Processing update for order ${id}`);
+    
+    // Parse the request body
+    const updateData = await request.json();
+    
+    // Log the update data for debugging
+    console.log("Update data received:", JSON.stringify(updateData, null, 2));
+    
+    // Find order
+    const order = await SalesOrder.findById(id);
+    if (!order) {
+      console.log(`API: Order ${id} not found`);
+      return NextResponse.json(
+        { success: false, message: 'Order not found' },
+        { status: 404 }
+      );
+    }
+    
+    let isUpdated = false;
+    
+    // Handle payment array
+    if (updateData.payment) {
+      try {
+        console.log("Processing payment update");
+        
+        // Ensure payment is an array
+        let paymentArray = updateData.payment;
+        if (!Array.isArray(paymentArray)) {
+          console.log("Converting payment to array");
+          paymentArray = [paymentArray];
+        }
+        
+        // Validate and format each payment object
+        const validatedPayments = paymentArray.map(payment => {
+          const amount = typeof payment.amount === 'string' 
+            ? parseFloat(payment.amount) 
+            : payment.amount;
+          
+          return {
+            method: payment.method || 'Cash',
+            amount: isNaN(amount) ? 0 : amount,
+            transactionId: payment.transactionId || '',
+            paymentDate: payment.paymentDate || new Date()
+          };
+        });
+        
+        console.log("Validated payments:", validatedPayments);
+        
+        // Update the order's payment
+        order.payment = validatedPayments;
+        isUpdated = true;
+      } catch (error) {
+        console.error("Error processing payment data:", error);
+        return NextResponse.json(
+          { success: false, message: `Error processing payment data: ${error.message}` },
+          { status: 400 }
+        );
+      }
+    }
+    
+    // Update order status if provided
+    if (updateData.orderStatus) {
+      console.log(`Updating order status to: ${updateData.orderStatus}`);
+      order.orderStatus = updateData.orderStatus;
+      isUpdated = true;
+    }
+    
+    // Update other fields if needed
+    // ...
+    
+    if (isUpdated) {
+      order.updatedAt = new Date();
+      
+      // Save the updated order
+      console.log("Saving updated order");
+      await order.save();
+      
+      return NextResponse.json({
+        success: true,
+        message: 'Order updated successfully',
+        data: order
+      });
+    } else {
+      console.log("No updates were made to the order");
+      return NextResponse.json({
+        success: false,
+        message: 'No updates were made to the order'
+      });
+    }
+  } catch (error) {
+    console.error('Error updating order:', error);
+    return NextResponse.json(
+      { success: false, message: `Server error: ${error.message}` },
+      { status: 500 }
+    );
+  }
+});

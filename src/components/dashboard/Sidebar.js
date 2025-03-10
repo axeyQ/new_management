@@ -1,3 +1,5 @@
+// Updated Sidebar.js with Outlet Management
+
 'use client';
 
 import { useState } from 'react';
@@ -32,6 +34,9 @@ import {
   MenuBook as MenuBookIcon,
   LocalOffer as PricingIcon,
   AddCircleOutline as AddOnIcon,
+  Store as StoreIcon,
+  AccessTime as TimeIcon,
+  PowerOff as PowerOffIcon,
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -47,6 +52,7 @@ const Sidebar = ({ open, toggleDrawer }) => {
   const [menuOpen, setMenuOpen] = useState({
     menu: true,
     tables: true,
+    outlet: true, // Add outlet section state
   });
 
   const handleMenuToggle = (section) => {
@@ -98,6 +104,72 @@ const Sidebar = ({ open, toggleDrawer }) => {
             <ListItemText primary="Dashboard" />
           </ListItemButton>
         </ListItem>
+
+        {/* Outlet Management Section */}
+        <ListItem disablePadding>
+          <ListItemButton onClick={() => handleMenuToggle('outlet')}>
+            <ListItemIcon>
+              <StoreIcon />
+            </ListItemIcon>
+            <ListItemText primary="Outlet Management" />
+            {menuOpen.outlet ? <ExpandLess /> : <ExpandMore />}
+          </ListItemButton>
+        </ListItem>
+        <Collapse in={menuOpen.outlet} timeout="auto" unmountOnExit>
+          <List component="div" disablePadding>
+            <ListItemButton
+              component={Link}
+              href="/dashboard/outlet"
+              selected={isActive('/dashboard/outlet')}
+              sx={{ pl: 4 }}
+            >
+              <ListItemIcon>
+                <StoreIcon />
+              </ListItemIcon>
+              <ListItemText primary="Outlet Status" />
+            </ListItemButton>
+
+            <ListItemButton
+              component={Link}
+              href="/dashboard/outlet/hours"
+              selected={isActive('/dashboard/outlet/hours')}
+              sx={{ pl: 4 }}
+            >
+              <ListItemIcon>
+                <TimeIcon />
+              </ListItemIcon>
+              <ListItemText primary="Operational Hours" />
+            </ListItemButton>
+
+            {user?.role === 'admin' && (
+              <ListItemButton
+                component={Link}
+                href="/dashboard/outlet/offline-reasons"
+                selected={isActive('/dashboard/outlet/offline-reasons')}
+                sx={{ pl: 4 }}
+              >
+                <ListItemIcon>
+                  <PowerOffIcon />
+                </ListItemIcon>
+                <ListItemText primary="Offline Reasons" />
+              </ListItemButton>
+            )}
+
+            {user?.role === 'admin' && (
+              <ListItemButton
+                component={Link}
+                href="/dashboard/outlet/settings"
+                selected={isActive('/dashboard/outlet/settings')}
+                sx={{ pl: 4 }}
+              >
+                <ListItemIcon>
+                  <SettingsIcon />
+                </ListItemIcon>
+                <ListItemText primary="Outlet Settings" />
+              </ListItemButton>
+            )}
+          </List>
+        </Collapse>
 
         {/* Menu Management Section */}
         <ListItem disablePadding>
@@ -250,7 +322,7 @@ const Sidebar = ({ open, toggleDrawer }) => {
             <ListItemText primary="Kitchen Display" />
           </ListItemButton>
         </ListItem>
-
+        
         {/* Customer Management */}
         <ListItem disablePadding>
           <ListItemButton

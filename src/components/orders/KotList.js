@@ -1,6 +1,6 @@
 // src/components/orders/KotList.js
 'use client';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Box,
   Paper,
@@ -24,17 +24,20 @@ import {
   MenuItem,
   TextField,
   IconButton,
+  Alert,
+  CircularProgress,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Print as PrintIcon,
   Delete as DeleteIcon,
   CheckCircle as CheckIcon,
+  Refresh as RefreshIcon
 } from '@mui/icons-material';
 import axiosWithAuth from '@/lib/axiosWithAuth';
 import toast from 'react-hot-toast';
 
-const KotList = ({ orderId, kots, onKotCreated }) => {
+const KotList = ({ orderId, kots = [], onKotCreated }) => {
   const [openKotDialog, setOpenKotDialog] = useState(false);
   const [selectedItems, setSelectedItems] = useState([]);
   const [kotStatus, setKotStatus] = useState('pending');
@@ -42,6 +45,18 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
   const [openStatusDialog, setOpenStatusDialog] = useState(false);
   const [selectedKot, setSelectedKot] = useState(null);
   const [newKotStatus, setNewKotStatus] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Handle refreshing KOTs list
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    if (onKotCreated) {
+      await onKotCreated();
+    }
+    setRefreshing(false);
+    toast.success('KOT list refreshed');
+  };
 
   const openCreateKot = () => {
     setOpenKotDialog(true);
@@ -56,10 +71,9 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
 
   const handleItemToggle = (item) => {
     const itemIndex = selectedItems.findIndex(
-      (selectedItem) => selectedItem.dish === item.dish && 
-                       (selectedItem.variant === item.variant)
+      (selectedItem) => selectedItem.dish === item.dish &&
+      (selectedItem.variant === item.variant)
     );
-    
     if (itemIndex === -1) {
       // Add item
       setSelectedItems([...selectedItems, { ...item, kotQuantity: 1 }]);
@@ -82,7 +96,7 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
       toast.error('Please select at least one item');
       return;
     }
-
+    setLoading(true);
     try {
       // Format items for KOT
       const items = selectedItems.map(item => ({
@@ -93,7 +107,6 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
         quantity: item.kotQuantity,
         notes: item.notes || ''
       }));
-
       const kotData = {
         salesOrder: orderId,
         items,
@@ -101,9 +114,7 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
         printed: false,
         printerId: printerId || 'default'
       };
-
       const res = await axiosWithAuth.post('/api/orders/kot', kotData);
-      
       if (res.data.success) {
         toast.success('KOT created successfully');
         onKotCreated();
@@ -114,6 +125,8 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
     } catch (error) {
       console.error('Error creating KOT:', error);
       toast.error(error.response?.data?.message || 'Error creating KOT');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -133,7 +146,6 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
       const res = await axiosWithAuth.put(`/api/orders/kot/${selectedKot._id}`, {
         kotStatus: newKotStatus
       });
-      
       if (res.data.success) {
         toast.success('KOT status updated successfully');
         onKotCreated();
@@ -150,22 +162,149 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
 
   const printKot = async (kot) => {
     try {
+      setLoading(true);
       const res = await axiosWithAuth.put(`/api/orders/kot/${kot._id}`, {
         printed: true,
         printerId: 'kitchen-printer' // Use default or get from settings
       });
-      
       if (res.data.success) {
         toast.success('KOT sent to printer');
         onKotCreated();
+        
         // In a real app, this would trigger the printing process
-        window.open(`/print/kot/${kot._id}`, '_blank');
+        const printWindow = window.open('', '_blank', 'width=500,height=600');
+        if (!printWindow) {
+          toast.error('Pop-up blocked! Please allow pop-ups for this site.');
+          setLoading(false);
+          return;
+        }
+        
+        // Generate KOT print content
+        printWindow.document.write(`
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>KOT #${kot.kotTokenNum}</title>
+            <meta charset="utf-8" />
+            <style>
+              body {
+                font-family: monospace;
+                margin: 0;
+                padding: 0;
+                width: 80mm;
+                font-size: 12px;
+              }
+              .container {
+                padding: 10px;
+              }
+              h1, h2 {
+                text-align: center;
+                margin: 5px 0;
+              }
+              h1 {
+                font-size: 18px;
+              }
+              h2 {
+                font-size: 16px;
+              }
+              .info {
+                display: flex;
+                justify-content: space-between;
+                margin: 10px 0;
+                border-bottom: 1px dashed #000;
+                padding-bottom: 5px;
+              }
+              table {
+                width: 100%;
+                border-collapse: collapse;
+              }
+              th, td {
+                text-align: left;
+                padding: 5px 3px;
+              }
+              th {
+                border-bottom: 1px solid #000;
+              }
+              .footer {
+                margin-top: 20px;
+                text-align: center;
+                font-size: 10px;
+              }
+              .print-button {
+                display: block;
+                margin: 20px auto;
+                padding: 10px 15px;
+                background: #4caf50;
+                color: white;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+              }
+              @media print {
+                .print-button {
+                  display: none;
+                }
+                body {
+                  width: 80mm;
+                }
+              }
+            </style>
+          </head>
+          <body>
+            <div class="container">
+              <h1>KITCHEN ORDER TICKET</h1>
+              <h2>KOT #${kot.kotTokenNum}</h2>
+              <div class="info">
+                <div>
+                  <p>Order Type: ${kot.orderMode} ${kot.table ? `(${kot.table.tableName || 'Table ID: ' + kot.table})` : ''}</p>
+                  <p>Customer: ${kot.customer.name}</p>
+                  <p>Date Time: ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString()}</p>
+                </div>
+              </div>
+              
+              <table>
+                <thead>
+                  <tr>
+                    <th>Item</th>
+                    <th>Variant</th>
+                    <th style="text-align: center;">Qty</th>
+                    <th>Notes</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${kot.items.map((item, index) => `
+                    <tr>
+                      <td>${item.dishName}</td>
+                      <td>${item.variantName || '-'}</td>
+                      <td style="text-align: center;">${item.quantity}</td>
+                      <td>${item.notes || '-'}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+              
+            
+
+              <button class="print-button" onclick="window.print()">Print KOT</button>
+            </div>
+            <script>
+              // Auto-print when loaded
+              window.onload = function() {
+                setTimeout(function() { window.print(); }, 500);
+              };
+            </script>
+          </body>
+          </html>
+        `);
+        printWindow.document.close();
       } else {
         toast.error(res.data.message || 'Failed to print KOT');
       }
     } catch (error) {
       console.error('Error printing KOT:', error);
       toast.error('Error printing KOT');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -184,18 +323,37 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
   return (
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
-        <Typography variant="h6">Kitchen Order Tickets (KOT)</Typography>
-        <Button
-          variant="contained"
-          color="primary"
-          startIcon={<AddIcon />}
-          onClick={openCreateKot}
-        >
-          Create New KOT
-        </Button>
+        <Typography variant="h6">
+          Kitchen Order Tickets {kots.length > 0 && `(${kots.length})`}
+        </Typography>
+        <Box>
+          <Button
+            variant="outlined"
+            startIcon={<RefreshIcon />}
+            onClick={handleRefresh}
+            disabled={refreshing}
+            sx={{ mr: 1 }}
+          >
+            {refreshing ? 'Refreshing...' : 'Refresh'}
+          </Button>
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<AddIcon />}
+            onClick={openCreateKot}
+          >
+            Create New KOT
+          </Button>
+        </Box>
       </Box>
 
-      {kots.length === 0 ? (
+      {loading && (
+        <Box display="flex" justifyContent="center" my={3}>
+          <CircularProgress />
+        </Box>
+      )}
+
+      {!loading && kots.length === 0 ? (
         <Paper sx={{ p: 3, textAlign: 'center' }}>
           <Typography variant="body1" paragraph>
             No KOTs created for this order yet.
@@ -225,28 +383,25 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
                       sx={{ mr: 1 }}
                     />
                     {kot.printed ? (
-                      <Chip 
-                        label="Printed" 
-                        color="success" 
-                        size="small" 
-                        icon={<CheckIcon />} 
+                      <Chip
+                        label="Printed"
+                        color="success"
+                        size="small"
+                        icon={<CheckIcon />}
                       />
                     ) : (
-                      <IconButton
-                        color="primary"
+                      <Chip
+                        label="Not Printed"
+                        variant="outlined"
                         size="small"
-                        onClick={() => printKot(kot)}
-                      >
-                        <PrintIcon />
-                      </IconButton>
+                        color="warning"
+                      />
                     )}
                   </Box>
                 </Box>
-                
                 <Typography variant="caption" color="text.secondary" display="block">
                   Created: {new Date(kot.createdAt).toLocaleString()}
                 </Typography>
-                
                 <TableContainer sx={{ mt: 2 }}>
                   <Table size="small">
                     <TableHead>
@@ -277,8 +432,16 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
                     </TableBody>
                   </Table>
                 </TableContainer>
-                
-                <Box display="flex" justifyContent="flex-end" mt={2}>
+                <Box display="flex" justifyContent="space-between" mt={2}>
+                  <Button
+                    variant="contained"
+                    color="primary"
+                    startIcon={<PrintIcon />}
+                    onClick={() => printKot(kot)}
+                    disabled={loading}
+                  >
+                    Print KOT
+                  </Button>
                   <Button
                     variant="outlined"
                     size="small"
@@ -318,7 +481,6 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
                 </Select>
               </FormControl>
             </Grid>
-            
             <Grid item xs={12}>
               <TextField
                 fullWidth
@@ -328,73 +490,84 @@ const KotList = ({ orderId, kots, onKotCreated }) => {
                 placeholder="e.g., kitchen-printer-1"
               />
             </Grid>
-            
             <Grid item xs={12}>
               <Typography variant="subtitle2" gutterBottom>
                 Select Items for KOT
               </Typography>
-              <TableContainer component={Paper} variant="outlined">
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell padding="checkbox"></TableCell>
-                      <TableCell>Item</TableCell>
-                      <TableCell>Quantity for KOT</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {/* We'd typically get these from the order */}
-                    {kots.length > 0 && kots[0]?.items?.map((item, index) => {
-                      const isSelected = selectedItems.some(
-                        selected => selected.dish === item.dish && selected.variant === item.variant
-                      );
-                      const selectedIndex = selectedItems.findIndex(
-                        selected => selected.dish === item.dish && selected.variant === item.variant
-                      );
-                      
-                      return (
-                        <TableRow key={index}>
-                          <TableCell padding="checkbox">
-                            <Chip
-                              label={isSelected ? 'Selected' : 'Select'}
-                              color={isSelected ? 'primary' : 'default'}
-                              variant={isSelected ? 'filled' : 'outlined'}
-                              onClick={() => handleItemToggle(item)}
-                            />
-                          </TableCell>
-                          <TableCell>
-                            {item.dishName}
-                            {item.variantName && (
-                              <Typography variant="caption" display="block">
-                                Variant: {item.variantName}
-                              </Typography>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {isSelected && (
-                              <TextField
-                                type="number"
-                                size="small"
-                                value={selectedItems[selectedIndex].kotQuantity}
-                                onChange={(e) => handleKotQuantityChange(selectedIndex, e.target.value)}
-                                InputProps={{ inputProps: { min: 1, max: item.quantity } }}
-                                sx={{ width: 80 }}
+              {kots.length > 0 && kots[0]?.items?.length > 0 ? (
+                <TableContainer component={Paper} variant="outlined">
+                  <Table>
+                    <TableHead>
+                      <TableRow>
+                        <TableCell padding="checkbox"></TableCell>
+                        <TableCell>Item</TableCell>
+                        <TableCell>Quantity for KOT</TableCell>
+                      </TableRow>
+                    </TableHead>
+                    <TableBody>
+                      {kots[0]?.items?.map((item, index) => {
+                        const isSelected = selectedItems.some(
+                          selected => selected.dish === item.dish &&
+                            selected.variant === item.variant
+                        );
+                        const selectedIndex = selectedItems.findIndex(
+                          selected => selected.dish === item.dish &&
+                            selected.variant === item.variant
+                        );
+                        return (
+                          <TableRow key={index}>
+                            <TableCell padding="checkbox">
+                              <Chip
+                                label={isSelected ? 'Selected' : 'Select'}
+                                color={isSelected ? 'primary' : 'default'}
+                                variant={isSelected ? 'filled' : 'outlined'}
+                                onClick={() => handleItemToggle(item)}
                               />
-                            )}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </TableContainer>
+                            </TableCell>
+                            <TableCell>
+                              {item.dishName}
+                              {item.variantName && (
+                                <Typography variant="caption" display="block">
+                                  Variant: {item.variantName}
+                                </Typography>
+                              )}
+                            </TableCell>
+                            <TableCell>
+                              {isSelected && (
+                                <TextField
+                                  type="number"
+                                  size="small"
+                                  value={selectedItems[selectedIndex].kotQuantity}
+                                  onChange={(e) =>
+                                    handleKotQuantityChange(selectedIndex, e.target.value)}
+                                  InputProps={{ inputProps: { min: 1, max: item.quantity } }}
+                                  sx={{ width: 80 }}
+                                />
+                              )}
+                            </TableCell>
+                          </TableRow>
+                        );
+                      })}
+                    </TableBody>
+                  </Table>
+                </TableContainer>
+              ) : (
+                <Alert severity="info">
+                  No items available. Please create an order with items first.
+                </Alert>
+              )}
             </Grid>
           </Grid>
         </DialogContent>
         <DialogActions>
           <Button onClick={closeCreateKot}>Cancel</Button>
-          <Button onClick={createKot} variant="contained" color="primary">
-            Create KOT
+          <Button 
+            onClick={createKot} 
+            variant="contained" 
+            color="primary"
+            disabled={loading || selectedItems.length === 0}
+          >
+            {loading ? 'Creating...' : 'Create KOT'}
           </Button>
         </DialogActions>
       </Dialog>

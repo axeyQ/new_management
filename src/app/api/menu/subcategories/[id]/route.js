@@ -40,20 +40,30 @@ export const GET = async (request, { params }) => {
 const updateHandler = async (request, { params }) => {
   try {
     const { id } = params;
-    const { 
-      subCategoryName, 
-      image, 
-      category, 
+    const {
+      subCategoryName,
+      image,
+      category,
       subCategoryStatus,
       discountStatus,
-      availabilityStatus 
+      availabilityStatus,
+      outOfStock,
+      outOfStockType,
+      outOfStockUntil,
+      outOfStockReason
     } = await request.json();
+    
+    console.log('Update request data:', { 
+      outOfStock, 
+      outOfStockType, 
+      outOfStockUntil, 
+      outOfStockReason 
+    });
     
     await connectDB();
     
     // Find subcategory
     let subcategory = await SubCategory.findById(id);
-    
     if (!subcategory) {
       return NextResponse.json(
         { success: false, message: 'Subcategory not found' },
@@ -69,21 +79,40 @@ const updateHandler = async (request, { params }) => {
     if (discountStatus) subcategory.discountStatus = discountStatus;
     if (availabilityStatus) subcategory.availabilityStatus = availabilityStatus;
     
+    // Update out of stock fields - add console logging to debug
+    if (outOfStock !== undefined) {
+      console.log('Setting outOfStock to:', outOfStock);
+      subcategory.outOfStock = outOfStock;
+    }
+    if (outOfStockType !== undefined) {
+      console.log('Setting outOfStockType to:', outOfStockType);
+      subcategory.outOfStockType = outOfStockType;
+    }
+    if (outOfStockUntil !== undefined) {
+      console.log('Setting outOfStockUntil to:', outOfStockUntil);
+      subcategory.outOfStockUntil = outOfStockUntil;
+    }
+    if (outOfStockReason !== undefined) {
+      console.log('Setting outOfStockReason to:', outOfStockReason);
+      subcategory.outOfStockReason = outOfStockReason;
+    }
+    
     subcategory.updatedBy = request.user._id;
     subcategory.updatedAt = Date.now();
     
     // Save updated subcategory
-    await subcategory.save();
+    const updatedSubcategory = await subcategory.save();
+    console.log('Updated subcategory:', updatedSubcategory);
     
     return NextResponse.json({
       success: true,
       message: 'Subcategory updated successfully',
-      data: subcategory
+      data: updatedSubcategory
     });
   } catch (error) {
     console.error('Error updating subcategory:', error);
     return NextResponse.json(
-      { success: false, message: 'Server error' },
+      { success: false, message: 'Server error: ' + error.message },
       { status: 500 }
     );
   }

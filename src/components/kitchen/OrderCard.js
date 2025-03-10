@@ -13,35 +13,10 @@ import {
   List,
   ListItem,
   ListItemText,
-  IconButton,
   Collapse
 } from '@mui/material';
-import {
-  ExpandMore as ExpandMoreIcon,
-  Done as DoneIcon,
-  Info as InfoIcon,
-  Assignment as AssignmentIcon,
-  AccessTime as AccessTimeIcon
-} from '@mui/icons-material';
 import { formatDistanceToNow } from 'date-fns';
-
-// Helper function to get status color
-const getStatusColor = (status) => {
-  switch (status) {
-    case 'pending':
-      return 'warning';
-    case 'preparing':
-      return 'info';
-    case 'ready':
-      return 'success';
-    case 'completed':
-      return 'default';
-    case 'cancelled':
-      return 'error';
-    default:
-      return 'default';
-  }
-};
+import { getOrderTypeDetails, getStatusColor, getStatusLabel, getOrderTypeEmoji, getStatusEmoji } from '@/config/orderTypes';
 
 // Helper function for time display
 const getElapsedTime = (date) => {
@@ -54,24 +29,23 @@ const getElapsedTime = (date) => {
 
 const OrderCard = ({ order, onStatusUpdate }) => {
   const [expanded, setExpanded] = useState(false);
+  
+  // Get order type details
+  const orderType = getOrderTypeDetails(order.orderMode);
 
   // Get next status based on current status
   const getNextStatus = () => {
     switch (order.kotStatus) {
-      case 'pending':
-        return 'preparing';
-      case 'preparing':
-        return 'ready';
-      case 'ready':
-        return 'completed';
-      default:
-        return null;
+      case 'pending': return 'preparing';
+      case 'preparing': return 'ready';
+      case 'ready': return 'completed';
+      default: return null;
     }
   };
 
   const nextStatus = getNextStatus();
-
-  // Handle bumping the order to next status
+  
+  // Handle status update (bump order)
   const handleBumpOrder = () => {
     if (nextStatus) {
       onStatusUpdate(order._id, nextStatus);
@@ -81,6 +55,36 @@ const OrderCard = ({ order, onStatusUpdate }) => {
   // Format order times
   const orderTime = new Date(order.createdAt);
   const elapsedTime = getElapsedTime(orderTime);
+  
+  // Calculate how long the order has been in current status
+  const urgencyLevel = 
+    elapsedTime.includes('hour') || elapsedTime.includes('day') 
+      ? 'high' 
+      : elapsedTime.includes('min') && parseInt(elapsedTime) > 15 
+        ? 'medium' 
+        : 'normal';
+  
+  // Get border color based on status and urgency
+  const getBorderColor = () => {
+    if (order.kotStatus === 'preparing' && urgencyLevel === 'high') {
+      return 'error.main'; // Red border for preparing orders taking too long
+    }
+    
+    return order.kotStatus === 'pending' ? 'warning.main' :
+           order.kotStatus === 'preparing' ? 'info.main' :
+           order.kotStatus === 'ready' ? 'success.main' :
+           'grey.300';
+  };
+
+  // Get status button text
+  const getStatusButtonText = () => {
+    switch (order.kotStatus) {
+      case 'pending': return `Start Cooking ${getStatusEmoji('preparing')}`;
+      case 'preparing': return `Ready to Serve ${getStatusEmoji('ready')}`;
+      case 'ready': return `Complete ${getStatusEmoji('completed')}`;
+      default: return 'Bump';
+    }
+  };
 
   return (
     <Card
@@ -89,21 +93,24 @@ const OrderCard = ({ order, onStatusUpdate }) => {
         display: 'flex',
         flexDirection: 'column',
         border: '1px solid',
-        borderColor:
-          order.kotStatus === 'pending' ? 'warning.main' :
-          order.kotStatus === 'preparing' ? 'info.main' :
-          order.kotStatus === 'ready' ? 'success.main' :
-          'grey.300'
+        borderColor: getBorderColor(),
+        ...(urgencyLevel === 'high' && { boxShadow: 3 })
       }}
     >
       <CardHeader
+        sx={{
+          bgcolor: order.kotStatus === 'pending' ? 'warning.light' : 
+                  order.kotStatus === 'preparing' ? 'info.light' :
+                  order.kotStatus === 'ready' ? 'success.light' :
+                  'background.paper'
+        }}
         title={
           <Box display="flex" justifyContent="space-between" alignItems="center">
             <Typography variant="h6" component="div">
               #{order.kotTokenNum}
             </Typography>
             <Chip
-              label={order.kotStatus.toUpperCase()}
+              label={`${getStatusEmoji(order.kotStatus)} ${getStatusLabel(order.kotStatus)}`}
               color={getStatusColor(order.kotStatus)}
               size="small"
             />
@@ -111,12 +118,25 @@ const OrderCard = ({ order, onStatusUpdate }) => {
         }
         subheader={
           <Box>
-            <Typography variant="body2" color="text.secondary">
-              {order.orderMode} • Table: {order.table?.tableName || 'N/A'}
-            </Typography>
+            <Box display="flex" alignItems="center" mb={0.5} mt={0.5}>
+              <Chip
+                label={`${getOrderTypeEmoji(order.orderMode)} ${orderType.label}`}
+                color={orderType.color}
+                size="small"
+                sx={{ mr: 1 }}
+              />
+              {order.table && (
+                <Typography variant="body2">
+                  Table: {order.table?.tableName || 'N/A'}
+                </Typography>
+              )}
+            </Box>
             <Box display="flex" alignItems="center" mt={0.5}>
-              <AccessTimeIcon fontSize="small" color="action" sx={{ mr: 0.5 }} />
-              <Typography variant="body2" color="text.secondary">
+              <span style={{ marginRight: '4px', fontSize: '16px' }}>⏱️</span>
+              <Typography 
+                variant="body2" 
+                color={urgencyLevel === 'high' ? 'error.main' : 'text.secondary'}
+              >
                 {elapsedTime} ago
               </Typography>
             </Box>
@@ -130,27 +150,36 @@ const OrderCard = ({ order, onStatusUpdate }) => {
             <ListItem
               key={index}
               divider={index < order.items.length - 1}
+              sx={{
+                bgcolor: item.notes ? 'rgba(255, 235, 59, 0.1)' : 'transparent'
+              }}
             >
               <ListItemText
                 primary={
                   <Box display="flex" justifyContent="space-between">
-                    <Typography variant="body1">
+                    <Typography variant="body1" fontWeight={item.notes ? 'medium' : 'regular'}>
                       {item.quantity}× {item.dishName}
                     </Typography>
-                    <Chip
-                      label={item.station}
-                      variant="outlined"
-                      size="small"
-                      color="primary"
-                    />
+                    {item.variantName && (
+                      <Typography variant="body2" color="text.secondary">
+                        {item.variantName}
+                      </Typography>
+                    )}
                   </Box>
                 }
                 secondary={
-                  item.notes && (
-                    <Typography variant="body2" color="text.secondary">
-                      Note: {item.notes}
-                    </Typography>
-                  )
+                  <>
+                    {item.notes && (
+                      <Typography variant="body2" color="error" fontStyle="italic">
+                        Note: {item.notes}
+                      </Typography>
+                    )}
+                    {item.addOns && item.addOns.length > 0 && (
+                      <Typography variant="caption" color="text.secondary">
+                        + {item.addOns.map(addon => addon.addOnName || addon.name).join(', ')}
+                      </Typography>
+                    )}
+                  </>
                 }
               />
             </ListItem>
@@ -162,7 +191,7 @@ const OrderCard = ({ order, onStatusUpdate }) => {
               Customer Information
             </Typography>
             <Typography variant="body2">
-              {order.customer.name} • {order.customer.phone}
+              {order.customer?.name || 'Unknown'} • {order.customer?.phone || 'No phone'}
             </Typography>
             <Typography variant="subtitle2" gutterBottom sx={{ mt: 2 }}>
               Order Details
@@ -178,23 +207,37 @@ const OrderCard = ({ order, onStatusUpdate }) => {
       <CardActions sx={{ justifyContent: 'space-between', padding: 1 }}>
         <Button
           size="small"
-          startIcon={<InfoIcon />}
           onClick={() => setExpanded(!expanded)}
         >
-          {expanded ? 'Less' : 'More'}
+          {expanded ? 'Less ↑' : 'More ↓'}
         </Button>
-        {nextStatus && (
-          <Button
-            variant="contained"
-            color={getStatusColor(order.kotStatus)}
-            startIcon={order.kotStatus === 'preparing' ? <DoneIcon /> : <AssignmentIcon />}
-            onClick={handleBumpOrder}
-          >
-            {order.kotStatus === 'pending' ? 'Start Cooking' :
-             order.kotStatus === 'preparing' ? 'Ready to Serve' :
-             order.kotStatus === 'ready' ? 'Complete' : 'Bump'}
-          </Button>
-        )}
+        
+        <Box>
+          {order.printed !== true && (
+            <Button 
+              size="small" 
+              color="primary"
+              sx={{ mr: 1 }}
+              onClick={() => {
+                // TODO: Implement printing functionality
+                alert('Printing functionality not implemented');
+              }}
+            >
+              🖨️ Print
+            </Button>
+          )}
+          
+          {nextStatus && (
+            <Button
+              variant="contained"
+              color={getStatusColor(order.kotStatus)}
+              onClick={handleBumpOrder}
+              size="small"
+            >
+              {getStatusButtonText()}
+            </Button>
+          )}
+        </Box>
       </CardActions>
     </Card>
   );

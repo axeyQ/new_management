@@ -1,3 +1,4 @@
+// src/app/api/menu/dishes/route.js
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import Dish from '@/models/Dish';
@@ -9,22 +10,19 @@ import Variant from '@/models/Variant';
 export const GET = async (request) => {
   try {
     await connectDB();
-    
     // Get query parameters
     const url = new URL(request.url);
     const subcategoryId = url.searchParams.get('subcategory');
-    
     let query = {};
     if (subcategoryId) {
       query.subCategory = subcategoryId;
     }
-    
     const dishes = await Dish.find(query)
       .sort({ dishName: 1 })
       .populate('subCategory')
       .populate('availabilityStatus')
       .populate('discountStatus');
-    
+      
     return NextResponse.json({
       success: true,
       count: dishes.length,
@@ -43,7 +41,6 @@ export const GET = async (request) => {
 const createHandler = async (request) => {
   try {
     const dishData = await request.json();
-    
     if (!dishData.dishName || !dishData.subCategory || dishData.subCategory.length === 0) {
       return NextResponse.json(
         { success: false, message: 'Dish name and at least one subcategory are required' },
@@ -55,12 +52,35 @@ const createHandler = async (request) => {
     
     // Check if dish already exists
     const existingDish = await Dish.findOne({ dishName: dishData.dishName });
-    
     if (existingDish) {
       return NextResponse.json(
         { success: false, message: 'Dish already exists' },
         { status: 400 }
       );
+    }
+    
+    // Validate delivery charges if provided
+    if (dishData.deliveryCharges) {
+      if (!['fixed', 'percentage'].includes(dishData.deliveryCharges.type)) {
+        return NextResponse.json(
+          { success: false, message: 'Invalid delivery charges type' },
+          { status: 400 }
+        );
+      }
+      
+      if (dishData.deliveryCharges.amount < 0) {
+        return NextResponse.json(
+          { success: false, message: 'Delivery charges amount cannot be negative' },
+          { status: 400 }
+        );
+      }
+      
+      if (!['dish', 'billing'].includes(dishData.deliveryCharges.appliedAt)) {
+        return NextResponse.json(
+          { success: false, message: 'Invalid delivery charges application point' },
+          { status: 400 }
+        );
+      }
     }
     
     // Extract variants data if present
@@ -86,7 +106,7 @@ const createHandler = async (request) => {
           natureTags: {
             cuisine: dish.natureTags?.cuisine || "Default Cuisine",
             spiciness: dish.natureTags?.spiciness || "Medium",
-            sweetnessSaltness: dish.natureTags?.sweetnessSaltness || "Medium", 
+            sweetnessSaltness: dish.natureTags?.sweetnessSaltness || "Medium",
             texture: dish.natureTags?.texture || "Smooth",
             oil: dish.natureTags?.oil || "Regular",
             temperature: dish.natureTags?.temperature || "Hot",
@@ -97,10 +117,15 @@ const createHandler = async (request) => {
             type: dish.packagingCharges?.type || "fixed",
             amount: dish.packagingCharges?.amount || 0,
             appliedAt: dish.packagingCharges?.appliedAt || "dish"
+          },
+          // Include required deliveryCharges fields
+          deliveryCharges: {
+            type: dish.deliveryCharges?.type || "fixed",
+            amount: dish.deliveryCharges?.amount || 0,
+            appliedAt: dish.deliveryCharges?.appliedAt || "dish"
           }
         };
         delete variantData._id; // Remove temporary ID
-        
         const newVariant = await Variant.create(variantData);
         return newVariant._id;
       });

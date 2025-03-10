@@ -1,53 +1,94 @@
+// src/models/Variant.js
 import mongoose from 'mongoose';
 
 const VariantSchema = new mongoose.Schema({
-  variantName: { 
-    type: String, 
+  variantName: {
+    type: String,
   },
-  image: { 
-    type: String 
+  image: {
+    type: String
   },
-  description: { 
-    type: String 
+  description: {
+    type: String
   },
-  shortCode: { 
-    type: String 
+  shortCode: {
+    type: String
   },
-  sales: { 
-    type: Number, 
-    default: 0 
+  sales: {
+    type: Number,
+    default: 0
   },
-  availabilityStatus: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Status' 
+  availabilityStatus: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Status'
   },
-  discountStatus: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Discount' 
-  }, 
+  discountStatus: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Discount'
+  },
   packagingCharges: {
-    type: { 
-      type: String, 
-      enum: ['fixed', 'percentage'], 
-      required: true 
+    type: {
+      type: String,
+      enum: ['fixed', 'percentage'],
+      required: true
     },
-    amount: { 
-      type: Number, 
-      required: true 
+    amount: {
+      type: Number,
+      required: true
     },
-    appliedAt: { 
-      type: String, 
-      enum: ['dish', 'billing'], 
-      required: true 
+    appliedAt: {
+      type: String,
+      enum: ['dish', 'billing'],
+      required: true
     }
   },
-  gstItemType: { 
+  stockStatus: {
+  isOutOfStock: {
+    type: Boolean,
+    default: false
+  },
+  restockTime: {
+    type: Date
+  },
+  outOfStockReason: {
+    type: String
+  },
+  autoRestock: {
+    type: Boolean,
+    default: true
+  },
+  lastStockUpdate: {
+    type: Date
+  },
+  lastStockUpdateBy: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User'
+  }
+},
+  // Add delivery charges to the variant schema
+  deliveryCharges: {
+    type: {
+      type: String,
+      enum: ['fixed', 'percentage'],
+      required: true
+    },
+    amount: {
+      type: Number,
+      required: true
+    },
+    appliedAt: {
+      type: String,
+      enum: ['dish', 'billing'],
+      required: true
+    }
+  },
+  gstItemType: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'GSTItemType'
   },
-  taxes: { 
-    type: mongoose.Schema.Types.ObjectId, 
-    ref: 'Tax' 
+  taxes: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Tax'
   },
   natureTags: {
     cuisine: { type: String, required: true },
@@ -59,27 +100,27 @@ const VariantSchema = new mongoose.Schema({
     cookingStyle: { type: String, required: true },
     other: { type: String }
   },
-  statInclusion: { 
-    type: Boolean, 
-    default: false 
+  statInclusion: {
+    type: Boolean,
+    default: false
   },
-  createdAt: { 
-    type: Date, 
-    default: Date.now 
+  createdAt: {
+    type: Date,
+    default: Date.now
   },
-  createdBy: { 
-    type: mongoose.Schema.Types.ObjectId, 
+  createdBy: {
+    type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true 
+    required: true
   },
-  updatedBy: { 
-    type: mongoose.Schema.Types.ObjectId, 
+  updatedBy: {
+    type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true 
+    required: true
   },
-  updatedAt: { 
-    type: Date, 
-    default: Date.now 
+  updatedAt: {
+    type: Date,
+    default: Date.now
   }
 });
 

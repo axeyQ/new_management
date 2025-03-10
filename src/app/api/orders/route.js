@@ -2,16 +2,15 @@ import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import SalesOrder from '@/models/SalesOrder';
 import { authMiddleware } from '@/lib/auth';
-import Dish from '@/models/Dish';              // Add this import
-import Variant from '@/models/Variant';        // Add this import
-import User from '@/models/User';              // Add this import
-import Table from '@/models/Table';            // Add this import
+import Dish from '@/models/Dish'; // Add this import
+import Variant from '@/models/Variant'; // Add this import
+import User from '@/models/User'; // Add this import
+import Table from '@/models/Table'; // Add this import
 
 // Get all orders with optional filters
 export const GET = authMiddleware(async (request) => {
   try {
     await connectDB();
-    
     // Get query parameters
     const url = new URL(request.url);
     const orderMode = url.searchParams.get('mode');
@@ -23,24 +22,28 @@ export const GET = authMiddleware(async (request) => {
     
     // Build query based on filters
     let query = {};
-    
     if (orderMode) {
       query.orderMode = orderMode;
     }
-    
     if (status) {
       query.orderStatus = status;
     }
-    
     if (startDate && endDate) {
+      const adjustedEndDate = new Date(endDate);
+      adjustedEndDate.setDate(adjustedEndDate.getDate() + 1);
+      
       query.orderDateTime = {
         $gte: new Date(startDate),
-        $lte: new Date(endDate)
+        $lt: adjustedEndDate
       };
+      console.log('Date query:', query.orderDateTime);
     } else if (startDate) {
       query.orderDateTime = { $gte: new Date(startDate) };
     } else if (endDate) {
-      query.orderDateTime = { $lte: new Date(endDate) };
+      const adjustedEndDate = new Date(endDate);
+      adjustedEndDate.setDate(adjustedEndDate.getDate() + 1);
+      
+      query.orderDateTime = { $lt: adjustedEndDate };
     }
     
     // Calculate pagination
@@ -95,9 +98,14 @@ const createHandler = async (request) => {
     await connectDB();
     const orderData = await request.json();
     
+    // Handle empty table field - convert empty string to null
+    if (orderData.table === '') {
+      orderData.table = null;
+    }
+    
     // Validate required fields
-    if (!orderData.orderMode || !orderData.customer || !orderData.itemsSold ||
-        orderData.itemsSold.length === 0) {
+    if (!orderData.orderMode || !orderData.customer ||
+        !orderData.itemsSold || orderData.itemsSold.length === 0) {
       return NextResponse.json(
         { success: false, message: 'Missing required order information' },
         { status: 400 }
@@ -119,7 +127,6 @@ const createHandler = async (request) => {
     // Calculate subtotal from items
     orderData.itemsSold.forEach(item => {
       subtotalAmount += item.price * item.quantity;
-      
       // Add addon prices if any
       if (item.addOns && item.addOns.length > 0) {
         item.addOns.forEach(addon => {
@@ -153,8 +160,7 @@ const createHandler = async (request) => {
     const deliveryCharge = orderData.deliveryCharge || 0;
     
     // Calculate total amount
-    const totalAmount = subtotalAmount + totalTaxAmount + deliveryCharge +
-                        packagingCharge - discountAmount;
+    const totalAmount = subtotalAmount + totalTaxAmount + deliveryCharge + packagingCharge - discountAmount;
     
     // Add the calculated values to order data
     orderData.subtotalAmount = parseFloat(subtotalAmount.toFixed(2));
@@ -179,11 +185,9 @@ const createHandler = async (request) => {
       const today = new Date(date.setHours(0, 0, 0, 0));
       const tomorrow = new Date(today);
       tomorrow.setDate(tomorrow.getDate() + 1);
-      
       const count = await SalesOrder.countDocuments({
         createdAt: { $gte: today, $lt: tomorrow }
       });
-      
       const sequence = (count + 1).toString().padStart(4, '0');
       
       // Format: INV-YYMMDD-XXXX

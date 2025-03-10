@@ -1,8 +1,11 @@
+// src/app/api/orders/kot/route.js (Updated with WebSocket notifications)
+
 import { NextResponse } from 'next/server';
 import connectDB from '@/lib/db';
 import KOT from '@/models/KOT';
 import SalesOrder from '@/models/SalesOrder';
-import { authMiddleware, roleMiddleware } from '@/lib/auth';
+import { authMiddleware } from '@/lib/auth';
+import { notifyNewKot } from '@/lib/websocket-server';
 
 // Get all KOTs with optional filters
 export const GET = authMiddleware(async (request) => {
@@ -15,22 +18,27 @@ export const GET = authMiddleware(async (request) => {
     const salesOrderId = url.searchParams.get('orderId');
     const limit = parseInt(url.searchParams.get('limit') || '50');
     const page = parseInt(url.searchParams.get('page') || '1');
-    
+
     // Build query based on filters
     let query = {};
     if (orderMode) {
       query.orderMode = orderMode;
     }
     if (status) {
-      query.kotStatus = status;
+      // Handle multiple statuses by splitting comma-separated values
+      if (status.includes(',')) {
+        query.kotStatus = { $in: status.split(',') };
+      } else {
+        query.kotStatus = status;
+      }
     }
     if (salesOrderId) {
       query.salesOrder = salesOrderId;
     }
-    
+
     // Calculate pagination
     const skip = (page - 1) * limit;
-    
+
     // Fetch KOTs with pagination
     const kots = await KOT.find(query)
       .sort({ createdAt: -1 })
@@ -40,7 +48,7 @@ export const GET = authMiddleware(async (request) => {
       .populate('salesOrder')
       .populate({
         path: 'items.dish',
-        select: 'dishName'
+        select: 'dishName image'
       })
       .populate({
         path: 'items.variant',
@@ -54,10 +62,10 @@ export const GET = authMiddleware(async (request) => {
         path: 'createdBy',
         select: 'username'
       });
-    
+
     // Get total count for pagination
     const total = await KOT.countDocuments(query);
-    
+
     return NextResponse.json({
       success: true,
       count: kots.length,
@@ -80,7 +88,7 @@ const createHandler = async (request) => {
   try {
     await connectDB();
     const kotData = await request.json();
-    
+
     // Validate required fields
     if (!kotData.salesOrder || !kotData.items || kotData.items.length === 0) {
       return NextResponse.json(
@@ -88,7 +96,7 @@ const createHandler = async (request) => {
         { status: 400 }
       );
     }
-    
+
     // Check if the sales order exists
     const salesOrder = await SalesOrder.findById(kotData.salesOrder);
     if (!salesOrder) {
@@ -97,7 +105,7 @@ const createHandler = async (request) => {
         { status: 404 }
       );
     }
-    
+
     // Add order details to KOT
     kotData.orderMode = salesOrder.orderMode;
     kotData.invoiceNum = salesOrder.invoiceNumber;
@@ -107,7 +115,7 @@ const createHandler = async (request) => {
       name: salesOrder.customer.name,
       phone: salesOrder.customer.phone
     };
-    
+
     // Process items to ensure they have all required fields
     kotData.items = kotData.items.map(item => ({
       dish: item.dish,
@@ -122,14 +130,14 @@ const createHandler = async (request) => {
       })),
       notes: item.notes || ''
     }));
-    
+
     // Add user info for tracking
     kotData.createdBy = request.user._id;
     kotData.updatedBy = request.user._id;
-    
+
     // Create the KOT
     const newKOT = await KOT.create(kotData);
-    
+
     // Populate necessary fields for response
     const populatedKOT = await KOT.findById(newKOT._id)
       .populate('table')
@@ -150,7 +158,10 @@ const createHandler = async (request) => {
         path: 'createdBy',
         select: 'username'
       });
-    
+
+    // Send WebSocket notification for new KOT
+    notifyNewKot(populatedKOT);
+
     return NextResponse.json({
       success: true,
       message: 'KOT created successfully',
