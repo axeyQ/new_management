@@ -2,11 +2,11 @@ import { Inter } from 'next/font/google';
 import './globals.css';
 import { AuthProvider } from '@/context/AuthContext';
 import { Toaster } from 'react-hot-toast';
-import IndexedDBInitializer from '@/components/IndexedDBInitializer';
-import { OfflineProvider } from '@/context/OfflineContext';
 import { NetworkProvider } from '@/context/NetworkContext';
-
+import dynamic from 'next/dynamic';
+import IndexedDBInitializer from '@/components/IndexedDBInitializer';
 const inter = Inter({ subsets: ['latin'] });
+
 
 export const metadata = {
   title: 'Restaurant Management System',

@@ -1,3 +1,5 @@
+import { isBrowser } from './browserCheck';
+
 const DB_NAME = 'MenuManagerOfflineDB';
 const DB_VERSION = 4; // Increment DB version for schema update
 const STORES = {
@@ -11,11 +13,28 @@ const STORES = {
   META: 'meta'
 };
 
+// Server-side fallback implementations
+const serverSideFallbacks = {
+  // Fallback that returns empty array
+  getEmptyArray: async () => [],
+  // Fallback that returns null
+  getNull: async () => null,
+  // Fallback that returns success=true
+  getSuccess: async () => ({ success: true }),
+  // Fallback for boolean operations
+  getBoolean: async () => true,
+};
+
 /**
  * Initialize the IndexedDB database
  * @returns {Promise<IDBDatabase>}
  */
+
 export const initDB = () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
     
@@ -85,6 +104,10 @@ export const initDB = () => {
  * @returns {Promise<any>}
  */
 const dbOperation = async (storeName, mode, callback) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   const db = await initDB();
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(storeName, mode);
@@ -113,6 +136,10 @@ const dbOperation = async (storeName, mode, callback) => {
  * @returns {Promise<boolean>}
  */
 export const saveCategories = async (categories) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.CATEGORIES, 'readwrite', (transaction, store, resolve) => {
       // Clear existing categories first
@@ -142,6 +169,10 @@ export const saveCategories = async (categories) => {
  * @returns {Promise<Array>}
  */
 export const getCategories = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.CATEGORIES, 'readonly', (transaction, store, resolve) => {
       const request = store.getAll();
@@ -161,6 +192,10 @@ export const getCategories = async () => {
  * @returns {Promise<Object|null>}
  */
 export const getCategoryById = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.CATEGORIES, 'readonly', (transaction, store, resolve) => {
       const request = store.get(id);
@@ -180,6 +215,10 @@ export const getCategoryById = async (id) => {
  * @returns {Promise<boolean>}
  */
 export const updateCategory = async (category) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.CATEGORIES, 'readwrite', (transaction, store, resolve) => {
       store.put(category);
@@ -198,6 +237,10 @@ export const updateCategory = async (category) => {
  * @returns {Promise<boolean>}
  */
 export const deleteCategory = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.CATEGORIES, 'readwrite', (transaction, store, resolve) => {
       store.delete(id);
@@ -216,6 +259,10 @@ export const deleteCategory = async (id) => {
  * @returns {Promise<boolean>}
  */
 export const saveSubcategories = async (subcategories) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.SUBCATEGORIES, 'readwrite', (transaction, store, resolve) => {
       // Clear existing subcategories
@@ -245,6 +292,10 @@ export const saveSubcategories = async (subcategories) => {
  * @returns {Promise<Array>}
  */
 export const getSubcategories = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.SUBCATEGORIES, 'readonly', (transaction, store, resolve) => {
       const request = store.getAll();
@@ -264,6 +315,10 @@ export const getSubcategories = async () => {
  * @returns {Promise<Array>}
  */
 export const getSubcategoriesByCategory = async (categoryId) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const subcategories = await getSubcategories();
     if (!categoryId) return subcategories;
@@ -284,6 +339,10 @@ export const getSubcategoriesByCategory = async (categoryId) => {
  * @returns {Promise<Object|null>}
  */
 export const getSubcategoryById = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.SUBCATEGORIES, 'readonly', (transaction, store, resolve) => {
       const request = store.get(id);
@@ -303,6 +362,10 @@ export const getSubcategoryById = async (id) => {
  * @returns {Promise<boolean>}
  */
 export const updateSubcategory = async (subcategory) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.SUBCATEGORIES, 'readwrite', (transaction, store, resolve) => {
       store.put(subcategory);
@@ -321,6 +384,10 @@ export const updateSubcategory = async (subcategory) => {
  * @returns {Promise<boolean>}
  */
 export const deleteSubcategory = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.SUBCATEGORIES, 'readwrite', (transaction, store, resolve) => {
       store.delete(id);
@@ -339,6 +406,10 @@ export const deleteSubcategory = async (id) => {
  * @returns {Promise<boolean>}
  */
 export const queueOperation = async (operation) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.PENDING_OPERATIONS, 'readwrite', (transaction, store, resolve) => {
       const enhancedOperation = {
@@ -360,6 +431,10 @@ export const queueOperation = async (operation) => {
  * @returns {Promise<Array>}
  */
 export const getPendingOperations = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.PENDING_OPERATIONS, 'readonly', (transaction, store, resolve) => {
       const request = store.getAll();
@@ -379,6 +454,10 @@ export const getPendingOperations = async () => {
  * @returns {Promise<boolean>}
  */
 export const clearOperation = async (operationId) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.PENDING_OPERATIONS, 'readwrite', (transaction, store, resolve) => {
       store.delete(operationId);
@@ -397,6 +476,10 @@ export const clearOperation = async (operationId) => {
  * @returns {Promise<string|null>}
  */
 export const getLastSyncTime = async (type = 'category') => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const key = type === 'category' ? 'lastCategorySync' : 'lastSubcategorySync';
     return await dbOperation(STORES.META, 'readonly', (transaction, store, resolve) => {
@@ -418,6 +501,10 @@ export const getLastSyncTime = async (type = 'category') => {
  * @returns {Promise<boolean>}
  */
 export const setMetadata = async (key, value) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.META, 'readwrite', (transaction, store, resolve) => {
       store.put({ key, value });
@@ -436,6 +523,10 @@ export const setMetadata = async (key, value) => {
  * @returns {Promise<any|null>}
  */
 export const getMetadata = async (key) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.META, 'readonly', (transaction, store, resolve) => {
       const request = store.get(key);
@@ -455,6 +546,10 @@ export const getMetadata = async (key) => {
  * @returns {Promise<Array>}
  */
 export const getSubcategoriesWithCategories = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const subcategories = await getSubcategories();
     const categories = await getCategories();
@@ -500,6 +595,10 @@ export const getSubcategoriesWithCategories = async () => {
  * @returns {Promise<Array>}
  */
 export const searchSubcategories = async (query) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   if (!query || query.trim() === '') {
     return await getSubcategories();
   }
@@ -524,6 +623,10 @@ export const searchSubcategories = async (query) => {
  * @returns {Promise<Array>} - Array of potential conflicts
  */
 export const detectSubcategoryConflicts = async (serverSubcategories) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const localSubcategories = await getSubcategories();
     const conflicts = [];
@@ -603,6 +706,10 @@ export const detectSubcategoryConflicts = async (serverSubcategories) => {
  * @returns {Promise<Array>} - Array of potential conflicts
  */
 export const detectCategoryConflicts = async (serverCategories) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const localCategories = await getCategories();
     const conflicts = [];
@@ -681,6 +788,10 @@ export const detectCategoryConflicts = async (serverCategories) => {
  * @returns {Promise<boolean>}
  */
 export const saveTables = async (tables) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.TABLES, 'readwrite', (transaction, store, resolve) => {
       // Clear existing tables first
@@ -708,6 +819,10 @@ export const saveTables = async (tables) => {
  * @returns {Promise<Array>}
  */
 export const getTables = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const result = await dbOperation(STORES.TABLES, 'readonly', (transaction, store, resolve) => {
       const request = store.getAll();
@@ -729,6 +844,10 @@ export const getTables = async () => {
  * @returns {Promise<Object|null>}
  */
 export const getTableById = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.TABLES, 'readonly', (transaction, store, resolve) => {
       const request = store.get(id);
@@ -748,6 +867,10 @@ export const getTableById = async (id) => {
  * @returns {Promise<Array>}
  */
 export const getTablesByType = async (typeId) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const tables = await getTables();
     if (!typeId) return tables;
@@ -767,6 +890,10 @@ export const getTablesByType = async (typeId) => {
  * @returns {Promise<boolean>}
  */
 export const updateTable = async (table) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.TABLES, 'readwrite', (transaction, store, resolve) => {
       store.put(table);
@@ -785,6 +912,10 @@ export const updateTable = async (table) => {
  * @returns {Promise<boolean>}
  */
 export const deleteTable = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.TABLES, 'readwrite', (transaction, store, resolve) => {
       store.delete(id);
@@ -803,6 +934,10 @@ export const deleteTable = async (id) => {
  * @returns {Promise<boolean>}
  */
 export const saveTableTypes = async (tableTypes) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.TABLE_TYPES, 'readwrite', (transaction, store, resolve) => {
       // Clear existing table types
@@ -830,6 +965,10 @@ export const saveTableTypes = async (tableTypes) => {
  * @returns {Promise<Array>}
  */
 export const getTableTypes = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const result = await dbOperation(STORES.TABLE_TYPES, 'readonly', (transaction, store, resolve) => {
       const request = store.getAll();
@@ -851,6 +990,10 @@ export const getTableTypes = async () => {
  * @returns {Promise<Object|null>}
  */
 export const getTableTypeById = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.TABLE_TYPES, 'readonly', (transaction, store, resolve) => {
       const request = store.get(id);
@@ -870,6 +1013,10 @@ export const getTableTypeById = async (id) => {
  * @returns {Promise<boolean>}
  */
 export const updateTableType = async (tableType) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.TABLE_TYPES, 'readwrite', (transaction, store, resolve) => {
       store.put(tableType);
@@ -888,6 +1035,10 @@ export const updateTableType = async (tableType) => {
  * @returns {Promise<boolean>}
  */
 export const deleteTableType = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.TABLE_TYPES, 'readwrite', (transaction, store, resolve) => {
       store.delete(id);
@@ -906,6 +1057,10 @@ export const deleteTableType = async (id) => {
  * @returns {Promise<Array>}
  */
 export const getTablesWithTableTypes = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const tables = await getTables();
     const tableTypes = await getTableTypes();
@@ -950,6 +1105,10 @@ export const getTablesWithTableTypes = async () => {
  * @returns {Promise<string|null>}
  */
 export const getTableLastSyncTime = async (type = 'table') => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const key = type === 'table' ? 'lastTableSync' : 'lastTableTypeSync';
     return await dbOperation(STORES.META, 'readonly', (transaction, store, resolve) => {
@@ -970,6 +1129,10 @@ export const getTableLastSyncTime = async (type = 'table') => {
  * @returns {Promise<Array>} - Array of potential conflicts
  */
 export const detectTableConflicts = async (serverTables) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const localTables = await getTables();
     const conflicts = [];
@@ -1048,6 +1211,10 @@ export const detectTableConflicts = async (serverTables) => {
  * @returns {Promise<Array>} - Array of potential conflicts
  */
 export const detectTableTypeConflicts = async (serverTableTypes) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const localTableTypes = await getTableTypes();
     const conflicts = [];
@@ -1125,6 +1292,10 @@ export const detectTableTypeConflicts = async (serverTableTypes) => {
  * @returns {Promise<Object>} Result object with success status
  */
 export const resetAndInitDB = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     // Close any open connections
     const dbs = await window.indexedDB.databases();
@@ -1161,6 +1332,10 @@ export const resetAndInitDB = async () => {
  * @returns {Promise<boolean>}
  */
 export const saveDishes = async (dishes) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.DISHES, 'readwrite', (transaction, store, resolve) => {
       // Clear existing dishes first
@@ -1187,6 +1362,10 @@ export const saveDishes = async (dishes) => {
  * @returns {Promise<Array>}
  */
 export const getDishes = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.DISHES, 'readonly', (transaction, store, resolve) => {
       const request = store.getAll();
@@ -1206,6 +1385,10 @@ export const getDishes = async () => {
  * @returns {Promise<Object|null>}
  */
 export const getDishById = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.DISHES, 'readonly', (transaction, store, resolve) => {
       const request = store.get(id);
@@ -1225,6 +1408,10 @@ export const getDishById = async (id) => {
  * @returns {Promise<boolean>}
  */
 export const updateDish = async (dish) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.DISHES, 'readwrite', (transaction, store, resolve) => {
       store.put(dish);
@@ -1243,6 +1430,10 @@ export const updateDish = async (dish) => {
  * @returns {Promise<boolean>}
  */
 export const deleteDish = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.DISHES, 'readwrite', (transaction, store, resolve) => {
       store.delete(id);
@@ -1261,6 +1452,10 @@ export const deleteDish = async (id) => {
  * @returns {Promise<Array>}
  */
 export const getDishesBySubcategory = async (subcategoryId) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const dishes = await getDishes();
     if (!subcategoryId) return dishes;
@@ -1286,6 +1481,10 @@ export const getDishesBySubcategory = async (subcategoryId) => {
  * @returns {Promise<Array>}
  */
 export const searchDishes = async (query) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   if (!query || query.trim() === '') {
     return await getDishes();
   }
@@ -1309,6 +1508,10 @@ export const searchDishes = async (query) => {
  * @returns {Promise<string|null>}
  */
 export const getDishLastSyncTime = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.META, 'readonly', (transaction, store, resolve) => {
       const request = store.get('lastDishSync');
@@ -1330,6 +1533,10 @@ export const getDishLastSyncTime = async () => {
  * @returns {Promise<boolean>}
  */
 export const saveVariants = async (variants) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.VARIANTS, 'readwrite', (transaction, store, resolve) => {
       // Clear existing variants
@@ -1356,6 +1563,10 @@ export const saveVariants = async (variants) => {
  * @returns {Promise<Array>}
  */
 export const getVariants = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.VARIANTS, 'readonly', (transaction, store, resolve) => {
       const request = store.getAll();
@@ -1375,6 +1586,10 @@ export const getVariants = async () => {
  * @returns {Promise<Array>}
  */
 export const getVariantsByDish = async (dishId) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const variants = await getVariants();
     return variants.filter(variant => 
@@ -1393,6 +1608,10 @@ export const getVariantsByDish = async (dishId) => {
  * @returns {Promise<Object|null>}
  */
 export const getVariantById = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.VARIANTS, 'readonly', (transaction, store, resolve) => {
       const request = store.get(id);
@@ -1412,6 +1631,10 @@ export const getVariantById = async (id) => {
  * @returns {Promise<boolean>}
  */
 export const updateVariant = async (variant) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.VARIANTS, 'readwrite', (transaction, store, resolve) => {
       store.put(variant);
@@ -1430,6 +1653,10 @@ export const updateVariant = async (variant) => {
  * @returns {Promise<boolean>}
  */
 export const deleteVariant = async (id) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     await dbOperation(STORES.VARIANTS, 'readwrite', (transaction, store, resolve) => {
       store.delete(id);
@@ -1447,6 +1674,10 @@ export const deleteVariant = async (id) => {
  * @returns {Promise<string|null>}
  */
 export const getVariantLastSyncTime = async () => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     return await dbOperation(STORES.META, 'readonly', (transaction, store, resolve) => {
       const request = store.get('lastVariantSync');
@@ -1466,6 +1697,10 @@ export const getVariantLastSyncTime = async () => {
  * @returns {Promise<Array>} - Array of potential conflicts
  */
 export const detectDishConflicts = async (serverDishes) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const localDishes = await getDishes();
     const conflicts = [];
@@ -1539,6 +1774,10 @@ export const detectDishConflicts = async (serverDishes) => {
  * @returns {Promise<Array>} - Array of potential conflicts
  */
 export const detectVariantConflicts = async (serverVariants) => {
+    // Skip IndexedDB operations on the server
+    if (!isBrowser()) {
+      return Promise.resolve(null);
+    }
   try {
     const localVariants = await getVariants();
     const conflicts = [];

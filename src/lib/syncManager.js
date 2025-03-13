@@ -1,8 +1,13 @@
+// src/lib/syncManager.js
 import axiosWithAuth from './axiosWithAuth';
 import * as idb from './indexedDBService';
 import toast from 'react-hot-toast';
 import { OPERATION_TYPES } from './enhancedAxiosWithAuth';
 import { showNotification } from './notificationService';
+import { isBrowser, safeNavigatorAccess, safeWindowAccess } from './browserCheck';
+
+// Skip initialization in server-side rendering
+let setupCompleted = false;
 
 // Maximum retry attempts for operations
 const MAX_RETRIES = 3;
@@ -19,6 +24,8 @@ const getBackoffDelay = (retryCount) => {
 * @param {Object} operation - Operation that failed
 */
 const logSyncError = (message, error, operation) => {
+  if (!isBrowser()) return;
+  
   console.error(`Sync Error: ${message}`, {
     error,
     operation,
@@ -69,6 +76,8 @@ const canRetryOperation = (operation) => {
 * @returns {Promise<boolean>} - Whether the conflict was resolved
 */
 const resolveConflict = async (operation, error) => {
+  if (!isBrowser()) return false;
+  
   // Implement specific conflict resolution strategies based on operation type
   
   // Category already exists conflict (409 status code)
@@ -330,6 +339,8 @@ const recoverMissingSubcategoryData = (operation) => {
 * @returns {Promise<{success: boolean, error: Object|null}>}
 */
 export const processOperation = async (operation) => {
+  if (!isBrowser()) return { success: false, error: new Error('Not in browser environment') };
+  
   try {
     console.log(`Processing operation: ${operation.type}`, operation);
     
@@ -1071,6 +1082,10 @@ export const processOperation = async (operation) => {
 * @returns {Promise<{success: boolean, processed: number, failed: number, retrying: number}>}
 */
 export const processPendingOperations = async () => {
+  if (!isBrowser()) {
+    return { success: true, processed: 0, failed: 0, retrying: 0 };
+  }
+  
   try {
     const pendingOperations = await idb.getPendingOperations();
     
@@ -1184,6 +1199,16 @@ export const processPendingOperations = async () => {
 * @returns {Promise<{success: boolean, categories: number, subcategories: number}>}
 */
 export const syncAllData = async () => {
+  if (!isBrowser()) {
+    return { 
+      success: true, 
+      categories: 0, 
+      subcategories: 0,
+      tables: 0,
+      tableTypes: 0 
+    };
+  }
+  
   try {
     // Sync categories
     const categoriesResponse = await axiosWithAuth.get('/api/menu/categories');
@@ -1234,6 +1259,10 @@ export const syncAllData = async () => {
 * @returns {Promise<{success: boolean, retriedCount: number}>}
 */
 export const retryFailedOperations = async () => {
+  if (!isBrowser()) {
+    return { success: true, retriedCount: 0 };
+  }
+  
   try {
     const failedOps = await idb.getMetadata('failedOperations') || {};
     const failedOpIds = Object.keys(failedOps);
@@ -1277,6 +1306,10 @@ export const retryFailedOperations = async () => {
 * @returns {Promise<{success: boolean, processed: number, failed: number, retrying: number}>}
 */
 export const initializeSync = async () => {
+  if (!isBrowser()) {
+    return { success: true, processed: 0, failed: 0, retrying: 0 };
+  }
+  
   try {
     await idb.setMetadata('syncStatus', 'in-progress');
     await idb.setMetadata('syncStartTime', new Date().toISOString());
@@ -1284,15 +1317,15 @@ export const initializeSync = async () => {
     // First process any pending operations
     const result = await processPendingOperations();
     
-    if (result.processed > 0) {
+    if (result.processed > 0 && typeof toast !== 'undefined') {
       toast.success(`Synchronized ${result.processed} operation(s)`);
     }
     
-    if (result.retrying > 0) {
+    if (result.retrying > 0 && typeof toast !== 'undefined') {
       toast.info(`${result.retrying} operation(s) will retry automatically`);
     }
     
-    if (result.failed > 0) {
+    if (result.failed > 0 && typeof toast !== 'undefined') {
       toast.error(`Failed to synchronize ${result.failed} operation(s)`);
       // If there were failures, provide more details
       console.error('Failed operations:', result.failedOperations);
@@ -1302,7 +1335,9 @@ export const initializeSync = async () => {
     const syncResult = await syncAllData();
     
     if (syncResult.success) {
-      toast.success('Data synchronized successfully');
+      if (typeof toast !== 'undefined') {
+        toast.success('Data synchronized successfully');
+      }
       
       // Store sync information
       await idb.setMetadata('lastFullSync', new Date().toISOString());
@@ -1313,7 +1348,9 @@ export const initializeSync = async () => {
         body: `Synchronized ${result.processed} operations and refreshed data`
       });
     } else {
-      toast.error('Failed to synchronize data from server');
+      if (typeof toast !== 'undefined') {
+        toast.error('Failed to synchronize data from server');
+      }
       await idb.setMetadata('syncStatus', 'failed');
       
       // Show notification for failed sync
@@ -1333,7 +1370,9 @@ export const initializeSync = async () => {
     };
   } catch (error) {
     console.error('Sync initialization failed:', error);
-    toast.error('Synchronization failed');
+    if (typeof toast !== 'undefined') {
+      toast.error('Synchronization failed');
+    }
     
     await idb.setMetadata('syncStatus', 'failed');
     await idb.setMetadata('lastSyncError', {
@@ -1356,12 +1395,17 @@ export const initializeSync = async () => {
 * Sets up automatic sync on reconnect
 */
 export const setupAutoSync = () => {
-  let lastOnlineStatus = navigator.onLine;
+  // Skip in non-browser environments
+  if (!isBrowser() || setupCompleted) return;
+  
+  let lastOnlineStatus = safeNavigatorAccess(() => navigator.onLine, true);
   
   window.addEventListener('online', async () => {
     if (!lastOnlineStatus) {
       // Only sync if we were previously offline
-      toast.success('Back online. Synchronizing data...');
+      if (typeof toast !== 'undefined') {
+        toast.success('Back online. Synchronizing data...');
+      }
       
       // Wait a moment for network to stabilize
       setTimeout(async () => {
@@ -1369,7 +1413,10 @@ export const setupAutoSync = () => {
         
         // If some operations failed, offer manual retry
         if (result.failed > 0) {
-          const retryLater = window.confirm(`${result.failed} operation(s) failed to sync. Would you like to retry them later?`);
+          const retryLater = safeWindowAccess(() => 
+            window.confirm(`${result.failed} operation(s) failed to sync. Would you like to retry them later?`), 
+            false
+          );
           
           if (!retryLater) {
             // If user doesn't want to retry later, clear failed operations
@@ -1384,12 +1431,14 @@ export const setupAutoSync = () => {
   
   window.addEventListener('offline', () => {
     lastOnlineStatus = false;
-    toast.warning('You are offline. Changes will be saved locally.');
+    if (typeof toast !== 'undefined') {
+      toast.warning('You are offline. Changes will be saved locally.');
+    }
   });
   
   // Register for background sync if available
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.ready.then(registration => {
+  if (safeNavigatorAccess(() => 'serviceWorker' in navigator, false)) {
+    safeNavigatorAccess(() => navigator.serviceWorker.ready.then(registration => {
       // Check if periodic sync is supported
       if ('periodicSync' in registration) {
         // Register for periodic sync (every 3 hours)
@@ -1399,11 +1448,11 @@ export const setupAutoSync = () => {
           console.error('Periodic sync registration failed:', error);
         });
       }
-    });
+    }), null);
   }
   
   // Initialize sync on load if we're online
-  if (navigator.onLine) {
+  if (safeNavigatorAccess(() => navigator.onLine, true)) {
     idb.getMetadata('syncStatus').then(status => {
       if (status !== 'in-progress') {
         idb.setMetadata('syncStatus', 'in-progress').then(() => {
@@ -1417,10 +1466,17 @@ export const setupAutoSync = () => {
       }
     });
   }
+  
+  setupCompleted = true;
 };
 
-// Initialize auto-sync
-setupAutoSync();
+// Only initialize auto-sync in browser environment
+if (isBrowser()) {
+  // Wrap in a setTimeout to ensure this runs after module initialization
+  setTimeout(() => {
+    setupAutoSync();
+  }, 0);
+}
 
 // Export the main functions
 export default {

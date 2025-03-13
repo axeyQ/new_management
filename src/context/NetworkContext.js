@@ -3,20 +3,23 @@ import { setupConnectivityListeners } from '@/lib/offlineUtils';
 import { createContext, useState, useEffect, useContext } from 'react';
 import { Snackbar, Alert } from '@mui/material';
 import { Wifi as WifiIcon, WifiOff as WifiOffIcon } from '@mui/icons-material';
-
+import { isBrowser } from '@/lib/browserCheck';
 const NetworkContext = createContext({
   isOnline: true,
   lastOnlineAt: null
 });
 
 export function NetworkProvider({ children }) {
-  const [isOnline, setIsOnline] = useState(typeof navigator !== 'undefined' ? navigator.onLine : true);
+  const [isOnline, setIsOnline] = useState(isBrowser() ? navigator.onLine : true);
   const [showOfflineAlert, setShowOfflineAlert] = useState(false);
   const [showOnlineAlert, setShowOnlineAlert] = useState(false);
   const [lastOnlineAt, setLastOnlineAt] = useState(
-    typeof localStorage !== 'undefined' ? localStorage.getItem('lastOnlineAt') : null
+    isBrowser() && typeof localStorage !== 'undefined'
+      ? localStorage.getItem('lastOnlineAt')
+      : null
   );
   useEffect(() => {
+    
     // Get last known online status from localStorage
     const lastKnownStatus = localStorage.getItem('lastOnlineStatus');
     if (lastKnownStatus !== null) {
@@ -47,6 +50,7 @@ export function NetworkProvider({ children }) {
     };
   }, []);
   useEffect(() => {
+    if (!isBrowser()) return;
     const handleOnline = () => {
       setIsOnline(true);
       setShowOnlineAlert(true);

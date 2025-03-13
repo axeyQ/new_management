@@ -1,24 +1,51 @@
-import { syncEvents, SYNC_EVENTS } from './syncTracker';
+// src/lib/notificationService.js
+import { isBrowser, safeNavigatorAccess, safeWindowAccess } from './browserCheck';
+
+// Create stub for syncEvents if it's not available during SSR
+let syncEvents = { on: () => () => {} };
+let SYNC_EVENTS = {};
+
+// Import syncEvents only in browser environment
+if (isBrowser()) {
+  try {
+    // Dynamic import would be better but requires Next.js configuration
+    // For now, we'll try to import and handle errors
+    const syncTrackerModule = require('./syncTracker');
+    if (syncTrackerModule) {
+      syncEvents = syncTrackerModule.syncEvents;
+      SYNC_EVENTS = syncTrackerModule.SYNC_EVENTS;
+    }
+  } catch (error) {
+    console.warn('SyncTracker module not available during import');
+  }
+}
 
 // Check if notifications are supported and permission is granted
 export const areNotificationsAvailable = () => {
-  return (
-    'Notification' in window &&
-    (Notification.permission === 'granted' || Notification.permission === 'default')
+  if (!isBrowser()) return false;
+  
+  return safeWindowAccess(() => 
+    'Notification' in window && 
+    (Notification.permission === 'granted' || Notification.permission === 'default'),
+    false
   );
 };
 
 // Request notification permission
 export const requestNotificationPermission = async () => {
-  if (!('Notification' in window)) {
+  if (!isBrowser()) {
+    return { success: false, message: 'Not in browser environment' };
+  }
+  
+  if (!safeWindowAccess(() => 'Notification' in window, false)) {
     return { success: false, message: 'Notifications are not supported in this browser' };
   }
 
-  if (Notification.permission === 'granted') {
+  if (safeWindowAccess(() => Notification.permission === 'granted', false)) {
     return { success: true, message: 'Notification permission already granted' };
   }
 
-  if (Notification.permission === 'denied') {
+  if (safeWindowAccess(() => Notification.permission === 'denied', false)) {
     return { success: false, message: 'Notification permission was denied' };
   }
 
@@ -38,22 +65,27 @@ export const requestNotificationPermission = async () => {
 
 // Show a notification
 export const showNotification = (title, options = {}) => {
-  if (!('Notification' in window) || Notification.permission !== 'granted') {
+  if (!isBrowser()) return false;
+  
+  if (!safeWindowAccess(() => 'Notification' in window && Notification.permission === 'granted', false)) {
     console.log('Cannot show notification. Permission not granted.');
     return false;
   }
 
   try {
     // Use the service worker to show the notification if available
-    if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-      navigator.serviceWorker.ready.then(registration => {
-        registration.showNotification(title, {
-          icon: '/icons/icon-192x192.png',
-          badge: '/icons/badge-72x72.png',
-          vibrate: [200, 100, 200],
-          ...options
-        });
-      });
+    if (safeNavigatorAccess(() => 'serviceWorker' in navigator && navigator.serviceWorker.controller, false)) {
+      safeNavigatorAccess(() => 
+        navigator.serviceWorker.ready.then(registration => {
+          registration.showNotification(title, {
+            icon: '/icons/icon-192x192.png',
+            badge: '/icons/badge-72x72.png',
+            vibrate: [200, 100, 200],
+            ...options
+          });
+        }),
+        null
+      );
     } else {
       // Fallback to regular notification if service worker not available
       new Notification(title, {
@@ -70,6 +102,10 @@ export const showNotification = (title, options = {}) => {
 
 // Initialize notification listeners
 export const initNotificationListeners = () => {
+  if (!isBrowser()) {
+    return { success: false, message: 'Not in browser environment' };
+  }
+  
   // Show notification when sync starts
   syncEvents.on(SYNC_EVENTS.SYNC_STARTED, (data) => {
     showNotification('Sync Started', {
@@ -109,18 +145,20 @@ export const initNotificationListeners = () => {
   });
 
   // Listen for notification clicks from service worker
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.addEventListener('message', (event) => {
-      if (event.data.type === 'notification-click') {
-        // Handle notification click
-        const { notificationType, url } = event.data;
-        
-        // Navigate to specified URL
-        if (url && window.location.pathname !== url) {
-          window.location.href = url;
+  if (safeNavigatorAccess(() => 'serviceWorker' in navigator, false)) {
+    safeNavigatorAccess(() => {
+      navigator.serviceWorker.addEventListener('message', (event) => {
+        if (event.data.type === 'notification-click') {
+          // Handle notification click
+          const { notificationType, url } = event.data;
+          
+          // Navigate to specified URL
+          if (url && window.location.pathname !== url) {
+            window.location.href = url;
+          }
         }
-      }
-    });
+      });
+    }, null);
   }
 
   return {
@@ -131,6 +169,14 @@ export const initNotificationListeners = () => {
 
 // Component to show notification permission request
 export const NotificationPermissionComponent = () => {
+  if (!isBrowser()) {
+    return {
+      requestPermission: () => {},
+      isSupported: false,
+      currentPermission: null
+    };
+  }
+  
   const handleRequestPermission = async () => {
     const result = await requestNotificationPermission();
     if (result.success) {
@@ -141,13 +187,18 @@ export const NotificationPermissionComponent = () => {
 
   return {
     requestPermission: handleRequestPermission,
-    isSupported: 'Notification' in window,
-    currentPermission: 'Notification' in window ? Notification.permission : null
+    isSupported: safeWindowAccess(() => 'Notification' in window, false),
+    currentPermission: safeWindowAccess(() => 
+      'Notification' in window ? Notification.permission : null,
+      null
+    )
   };
 };
 
 // Send notification about operation status
 export const notifyOperationStatus = (operation, success) => {
+  if (!isBrowser()) return;
+  
   if (success) {
     // Only notify about bulk operation success, not individual ones
     return;
@@ -175,6 +226,8 @@ export const notifyOperationStatus = (operation, success) => {
 
 // Notifications for specific offline events
 export const notifyOfflineStatus = (isOffline) => {
+  if (!isBrowser()) return;
+  
   if (isOffline) {
     showNotification('You Are Offline', {
       body: 'The app is now in offline mode. Changes will be synced when you reconnect.',
@@ -191,20 +244,28 @@ export const notifyOfflineStatus = (isOffline) => {
 
 // Add notification handlers to service worker
 export const addNotificationHandlersToServiceWorker = () => {
-  if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-    navigator.serviceWorker.controller.postMessage({
-      type: 'init-notification-handlers'
-    });
+  if (!isBrowser()) return;
+  
+  if (safeNavigatorAccess(() => 'serviceWorker' in navigator && navigator.serviceWorker.controller, false)) {
+    safeNavigatorAccess(() => {
+      navigator.serviceWorker.controller.postMessage({
+        type: 'init-notification-handlers'
+      });
+    }, null);
   }
 };
 
 // Initialize
 export const initNotifications = async () => {
+  if (!isBrowser()) {
+    return { success: false, message: 'Not in browser environment' };
+  }
+  
   if (!areNotificationsAvailable()) {
     return { success: false, message: 'Notifications are not available' };
   }
 
-  if (Notification.permission === 'granted') {
+  if (safeWindowAccess(() => Notification.permission === 'granted', false)) {
     initNotificationListeners();
     addNotificationHandlersToServiceWorker();
     return { success: true, message: 'Notifications initialized' };
@@ -213,7 +274,10 @@ export const initNotifications = async () => {
   return { success: false, message: 'Notification permission not granted' };
 };
 
-// Auto-initialize if permission is already granted
-if (typeof window !== 'undefined' && Notification.permission === 'granted') {
-  initNotifications();
+// Auto-initialize if permission is already granted, but only in browser
+if (isBrowser() && safeWindowAccess(() => Notification.permission === 'granted', false)) {
+  // Delay initialization to ensure DOM is ready
+  setTimeout(() => {
+    initNotifications();
+  }, 0);
 }

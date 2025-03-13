@@ -1,6 +1,6 @@
 import * as idb from './indexedDBService';
 import { BehaviorSubject } from 'rxjs';
-
+import { isBrowser, safeNavigatorAccess } from './browserCheck';
 // Create observables for sync status
 export const syncStatus = new BehaviorSubject({
   inProgress: false,
@@ -61,6 +61,7 @@ export const syncEvents = new SyncEventEmitter();
  * @param {Object} progress - Progress info
  */
 export const updateSyncProgress = async (progress) => {
+  if (!isBrowser()) return;
   // Get current state
   const current = syncStatus.getValue();
   
@@ -101,6 +102,7 @@ export const updateSyncProgress = async (progress) => {
  * @param {Object} data - Additional data
  */
 export const logSyncOperation = async (operationId, success, data = {}) => {
+  if (!isBrowser()) return;
   // Get current progress
   const current = syncStatus.getValue();
   
@@ -161,6 +163,7 @@ export const logSyncOperation = async (operationId, success, data = {}) => {
  * @param {Object} additionalData - Any additional data to include
  */
 export const startSyncTracking = async (total, additionalData = {}) => {
+  if (!isBrowser()) return null;
   const newStatus = {
     inProgress: true,
     progress: 0,
@@ -189,6 +192,7 @@ export const startSyncTracking = async (total, additionalData = {}) => {
  * @param {Object} result - Final result data
  */
 export const completeSyncTracking = async (result = {}) => {
+  if (!isBrowser()) return null;
   const current = syncStatus.getValue();
   
   const completed = {
@@ -232,6 +236,7 @@ export const completeSyncTracking = async (result = {}) => {
  * Get the current sync status from IndexedDB
  */
 export const loadSyncStatus = async () => {
+  if (!isBrowser()) return null;
   const savedStatus = await idb.getMetadata('syncStatus');
   if (savedStatus) {
     syncStatus.next(savedStatus);
@@ -243,6 +248,8 @@ export const loadSyncStatus = async () => {
  * Listen for sync events from the service worker
  */
 export const listenForServiceWorkerSyncEvents = () => {
+  if (!isBrowser()) return;
+
   if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
     navigator.serviceWorker.addEventListener('message', (event) => {
       const data = event.data;

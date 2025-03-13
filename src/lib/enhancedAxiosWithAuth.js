@@ -2,6 +2,7 @@
 import axios from 'axios';
 import { v4 as uuidv4 } from 'uuid';
 import * as idb from './indexedDBService';
+import { isBrowser, safeWindowAccess, safeNavigatorAccess } from './browserCheck';
 
 // Create a custom axios instance
 const enhancedAxiosWithAuth = axios.create();
@@ -51,8 +52,8 @@ const captureDetailedCategoryError = (error, request) => {
     }
   };
 
-  // Check for network errors during online status
-  if (!error.response && navigator.onLine) {
+  // Check for network errors during online status (safely)
+  if (!error.response && safeNavigatorAccess(() => navigator.onLine, true)) {
     errorInfo.detailedReason = 'NETWORK_UNREACHABLE';
     errorInfo.userMessage = 'Server unreachable despite online status. Check your connection.';
   }
@@ -104,22 +105,6 @@ const captureDetailedCategoryError = (error, request) => {
   console.error('Detailed category creation error:', errorInfo);
   return errorInfo;
 };
-
-// Add a request interceptor to include the token in all requests
-enhancedAxiosWithAuth.interceptors.request.use(
-  async (config) => {
-    // Get token from localStorage
-    const token = localStorage.getItem('token');
-    // If token exists, add it to headers
-    if (token) {
-      config.headers['Authorization'] = `Bearer ${token}`;
-    }
-    return config;
-  },
-  (error) => {
-    return Promise.reject(error);
-  }
-);
 
 // Function to determine operation type from request
 const getOperationType = (url, method) => {
@@ -197,7 +182,10 @@ const extractIdFromUrl = (url) => {
 
 // Register for background sync if available
 const registerBackgroundSync = async (operationId) => {
-  if ('serviceWorker' in navigator && 'SyncManager' in window) {
+  if (!isBrowser()) return false;
+
+  if (safeNavigatorAccess(() => 'serviceWorker' in navigator, false) && 
+      safeWindowAccess(() => 'SyncManager' in window, false)) {
     try {
       const registration = await navigator.serviceWorker.ready;
       await registration.sync.register(`sync-operation-${operationId}`);
@@ -215,6 +203,8 @@ const generateTempId = () => `temp_${uuidv4()}`;
 
 // Apply optimistic updates locally
 const applyOptimisticUpdate = async (operationType, url, data, tempId = null) => {
+  if (!isBrowser()) return null;
+
   switch (operationType) {
     case OPERATION_TYPES.CREATE_CATEGORY: {
       const newCategory = {
@@ -482,261 +472,300 @@ const applyOptimisticUpdate = async (operationType, url, data, tempId = null) =>
   }
 };
 
-// Add a response interceptor to handle offline mode
-enhancedAxiosWithAuth.interceptors.response.use(
-  async (response) => {
-    // If it's a GET request for categories or subcategories, store the data
-    const url = response.config.url;
-    if (url.includes('/api/menu/categories') && response.config.method === 'get') {
-      if (response.data.success && response.data.data) {
-        await idb.saveCategories(response.data.data);
+// Only add interceptors in browser environment
+if (isBrowser()) {
+  // Add a request interceptor to include the token in all requests
+  enhancedAxiosWithAuth.interceptors.request.use(
+    async (config) => {
+      // Get token from localStorage (safely)
+      const token = safeWindowAccess(() => localStorage.getItem('token'), null);
+      // If token exists, add it to headers
+      if (token) {
+        config.headers['Authorization'] = `Bearer ${token}`;
       }
-    } else if (url.includes('/api/menu/subcategories') && response.config.method === 'get') {
-      if (response.data.success && response.data.data) {
-        await idb.saveSubcategories(response.data.data);
-      }
-    } else if (url.includes('/api/tables/types') && response.config.method === 'get') {
-      if (response.data.success && response.data.data) {
-        await idb.saveTableTypes(response.data.data);
-      }
-    } else if (url.includes('/api/tables') && response.config.method === 'get' && !url.includes('/types')) {
-      if (response.data.success && response.data.data) {
-        await idb.saveTables(response.data.data);
-      }
-    } else if (url.includes('/api/menu/dishes') && response.config.method === 'get' && !url.includes('/variants')) {
-      if (response.data.success && response.data.data) {
-        await idb.saveDishes(response.data.data);
-      }
+      return config;
+    },
+    (error) => {
+      return Promise.reject(error);
     }
-    else if (url.includes('/api/menu/variants') && response.config.method === 'get') {
-      if (response.data.success && response.data.data) {
-        await idb.saveVariants(response.data.data);
-      }
-    }
-    // Handle dish variants separately (dish/:id/variants endpoint)
-    else if (url.includes('/api/menu/dishes/') && url.includes('/variants') && response.config.method === 'get') {
-      if (response.data.success && response.data.data) {
-        // Get existing variants and merge with new ones
-        const existingVariants = await idb.getVariants();
-        const dishId = url.split('/dishes/')[1].split('/variants')[0]; // Extract dish ID from URL
-        
-        // Filter out old variants for this dish
-        const filteredVariants = existingVariants.filter(variant => {
-          return variant.dishReference !== dishId && 
-                 (!variant.dishReference || variant.dishReference._id !== dishId);
-        });
-        
-        // Merge with new variants
-        const updatedVariants = [...filteredVariants, ...response.data.data];
-        await idb.saveVariants(updatedVariants);
-      }
-    }
-    
-    return response;
-  },
-  async (error) => {
-    // Handle network errors
-    if (!error.response) {
-      const request = error.config;
-      const operationType = getOperationType(request.url, request.method);
-      const requestData = request.data ? JSON.parse(request.data) : {};
-      
-      // For GET requests, try to return cached data
-      if (request.method.toLowerCase() === 'get') {
-        if (request.url.includes('/api/menu/categories')) {
-          const cachedCategories = await idb.getCategories();
-          const lastSyncTime = await idb.getLastSyncTime('category');
-          if (cachedCategories.length > 0) {
-            console.log('Returning cached categories');
-            return Promise.resolve({
-              data: {
-                success: true,
-                data: cachedCategories,
-                isOfflineData: true,
-                lastSyncTime
-              }
-            });
-          }
-        } else if (request.url.includes('/api/menu/subcategories')) {
-          let cachedSubcategories = await idb.getSubcategories();
-          const lastSyncTime = await idb.getLastSyncTime('subcategory');
-          
-          // Check if there's a category filter
-          if (request.url.includes('?category=')) {
-            const categoryId = new URL(request.url, window.location.origin).searchParams.get('category');
-            if (categoryId) {
-              cachedSubcategories = await idb.getSubcategoriesByCategory(categoryId);
-            }
-          }
-          
-          if (cachedSubcategories.length > 0) {
-            console.log('Returning cached subcategories');
-            return Promise.resolve({
-              data: {
-                success: true,
-                data: cachedSubcategories,
-                isOfflineData: true,
-                lastSyncTime
-              }
-            });
-          }
-        } else if (request.url.includes('/api/tables/types')) {
-          const cachedTableTypes = await idb.getTableTypes();
-          const lastSyncTime = await idb.getTableLastSyncTime('tableType');
-          if (cachedTableTypes.length > 0) {
-            console.log('Returning cached table types');
-            return Promise.resolve({
-              data: {
-                success: true,
-                data: cachedTableTypes,
-                isOfflineData: true,
-                lastSyncTime
-              }
-            });
-          }
-        } else if (request.url.includes('/api/tables') && !request.url.includes('/types')) {
-          let cachedTables = await idb.getTables();
-          const lastSyncTime = await idb.getTableLastSyncTime('table');
+  );
 
-          // Check if there's a type filter
-          if (request.url.includes('?type=')) {
-            const typeId = new URL(request.url, window.location.origin).searchParams.get('type');
-            if (typeId) {
-              cachedTables = await idb.getTablesByType(typeId);
+  // Add a response interceptor to handle offline mode
+  enhancedAxiosWithAuth.interceptors.response.use(
+    async (response) => {
+      // If it's a GET request for categories or subcategories, store the data
+      const url = response.config.url;
+      if (url.includes('/api/menu/categories') && response.config.method === 'get') {
+        if (response.data.success && response.data.data) {
+          await idb.saveCategories(response.data.data);
+        }
+      } else if (url.includes('/api/menu/subcategories') && response.config.method === 'get') {
+        if (response.data.success && response.data.data) {
+          await idb.saveSubcategories(response.data.data);
+        }
+      } else if (url.includes('/api/tables/types') && response.config.method === 'get') {
+        if (response.data.success && response.data.data) {
+          await idb.saveTableTypes(response.data.data);
+        }
+      } else if (url.includes('/api/tables') && response.config.method === 'get' && !url.includes('/types')) {
+        if (response.data.success && response.data.data) {
+          await idb.saveTables(response.data.data);
+        }
+      } else if (url.includes('/api/menu/dishes') && response.config.method === 'get' && !url.includes('/variants')) {
+        if (response.data.success && response.data.data) {
+          await idb.saveDishes(response.data.data);
+        }
+      }
+      else if (url.includes('/api/menu/variants') && response.config.method === 'get') {
+        if (response.data.success && response.data.data) {
+          await idb.saveVariants(response.data.data);
+        }
+      }
+      // Handle dish variants separately (dish/:id/variants endpoint)
+      else if (url.includes('/api/menu/dishes/') && url.includes('/variants') && response.config.method === 'get') {
+        if (response.data.success && response.data.data) {
+          // Get existing variants and merge with new ones
+          const existingVariants = await idb.getVariants();
+          const dishId = url.split('/dishes/')[1].split('/variants')[0]; // Extract dish ID from URL
+          
+          // Filter out old variants for this dish
+          const filteredVariants = existingVariants.filter(variant => {
+            return variant.dishReference !== dishId && 
+                   (!variant.dishReference || variant.dishReference._id !== dishId);
+          });
+          
+          // Merge with new variants
+          const updatedVariants = [...filteredVariants, ...response.data.data];
+          await idb.saveVariants(updatedVariants);
+        }
+      }
+      
+      return response;
+    },
+    async (error) => {
+      // Handle network errors
+      if (!error.response) {
+        const request = error.config;
+        const operationType = getOperationType(request.url, request.method);
+        const requestData = request.data ? JSON.parse(request.data) : {};
+        
+        // For GET requests, try to return cached data
+        if (request.method.toLowerCase() === 'get') {
+          if (request.url.includes('/api/menu/categories')) {
+            const cachedCategories = await idb.getCategories();
+            const lastSyncTime = await idb.getLastSyncTime('category');
+            if (cachedCategories.length > 0) {
+              console.log('Returning cached categories');
+              return Promise.resolve({
+                data: {
+                  success: true,
+                  data: cachedCategories,
+                  isOfflineData: true,
+                  lastSyncTime
+                }
+              });
             }
-          }
-          
-          if (cachedTables.length > 0) {
-            console.log('Returning cached tables');
-            return Promise.resolve({
-              data: {
-                success: true,
-                data: cachedTables,
-                isOfflineData: true,
-                lastSyncTime
-              }
-            });
-          }
-        } else if (request.url.includes('/api/menu/dishes') && !request.url.includes('/variants')) {
-          // Check if there's a subcategory filter
-          let cachedDishes;
-          
-          if (request.url.includes('?subcategory=')) {
-            const subcategoryId = new URL(request.url, window.location.origin)
-              .searchParams.get('subcategory');
+          } else if (request.url.includes('/api/menu/subcategories')) {
+            let cachedSubcategories = await idb.getSubcategories();
+            const lastSyncTime = await idb.getLastSyncTime('subcategory');
             
-            if (subcategoryId) {
-              cachedDishes = await idb.getDishesBySubcategory(subcategoryId);
+            // Check if there's a category filter - handle URL parsing safely
+            if (request.url.includes('?category=')) {
+              try {
+                // Get the origin, defaulting to an empty string if not available
+                const origin = safeWindowAccess(() => window.location.origin, '');
+                const categoryId = new URL(request.url, origin).searchParams.get('category');
+                if (categoryId) {
+                  cachedSubcategories = await idb.getSubcategoriesByCategory(categoryId);
+                }
+              } catch (error) {
+                console.error("Error parsing URL:", error);
+                // Continue with all subcategories if URL parsing fails
+              }
+            }
+            
+            if (cachedSubcategories.length > 0) {
+              console.log('Returning cached subcategories');
+              return Promise.resolve({
+                data: {
+                  success: true,
+                  data: cachedSubcategories,
+                  isOfflineData: true,
+                  lastSyncTime
+                }
+              });
+            }
+          } else if (request.url.includes('/api/tables/types')) {
+            const cachedTableTypes = await idb.getTableTypes();
+            const lastSyncTime = await idb.getTableLastSyncTime('tableType');
+            if (cachedTableTypes.length > 0) {
+              console.log('Returning cached table types');
+              return Promise.resolve({
+                data: {
+                  success: true,
+                  data: cachedTableTypes,
+                  isOfflineData: true,
+                  lastSyncTime
+                }
+              });
+            }
+          } else if (request.url.includes('/api/tables') && !request.url.includes('/types')) {
+            let cachedTables = await idb.getTables();
+            const lastSyncTime = await idb.getTableLastSyncTime('table');
+
+            // Check if there's a type filter - handle URL parsing safely
+            if (request.url.includes('?type=')) {
+              try {
+                // Get the origin, defaulting to an empty string if not available
+                const origin = safeWindowAccess(() => window.location.origin, '');
+                const typeId = new URL(request.url, origin).searchParams.get('type');
+                if (typeId) {
+                  cachedTables = await idb.getTablesByType(typeId);
+                }
+              } catch (error) {
+                console.error("Error parsing URL:", error);
+                // Continue with all tables if URL parsing fails
+              }
+            }
+            
+            if (cachedTables.length > 0) {
+              console.log('Returning cached tables');
+              return Promise.resolve({
+                data: {
+                  success: true,
+                  data: cachedTables,
+                  isOfflineData: true,
+                  lastSyncTime
+                }
+              });
+            }
+          } else if (request.url.includes('/api/menu/dishes') && !request.url.includes('/variants')) {
+            // Check if there's a subcategory filter - handle URL parsing safely
+            let cachedDishes;
+            
+            if (request.url.includes('?subcategory=')) {
+              try {
+                // Get the origin, defaulting to an empty string if not available
+                const origin = safeWindowAccess(() => window.location.origin, '');
+                const subcategoryId = new URL(request.url, origin).searchParams.get('subcategory');
+                
+                if (subcategoryId) {
+                  cachedDishes = await idb.getDishesBySubcategory(subcategoryId);
+                } else {
+                  cachedDishes = await idb.getDishes();
+                }
+              } catch (error) {
+                console.error("Error parsing URL:", error);
+                cachedDishes = await idb.getDishes();
+              }
             } else {
               cachedDishes = await idb.getDishes();
             }
-          } else {
-            cachedDishes = await idb.getDishes();
+            
+            const lastSyncTime = await idb.getDishLastSyncTime();
+            
+            if (cachedDishes.length > 0) {
+              console.log('Returning cached dishes');
+              return Promise.resolve({
+                data: {
+                  success: true,
+                  data: cachedDishes,
+                  isOfflineData: true,
+                  lastSyncTime
+                }
+              });
+            }
+          } else if (request.url.includes('/api/menu/variants')) {
+            const cachedVariants = await idb.getVariants();
+            const lastSyncTime = await idb.getVariantLastSyncTime();
+            
+            if (cachedVariants.length > 0) {
+              console.log('Returning cached variants');
+              return Promise.resolve({
+                data: {
+                  success: true,
+                  data: cachedVariants,
+                  isOfflineData: true,
+                  lastSyncTime
+                }
+              });
+            }
+          } else if (request.url.includes('/api/menu/dishes/') && request.url.includes('/variants')) {
+            // Extract dish ID from URL
+            const urlParts = request.url.split('/');
+            const dishIdIndex = urlParts.indexOf('dishes') + 1;
+            const dishId = urlParts[dishIdIndex];
+            
+            const cachedVariants = await idb.getVariantsByDish(dishId);
+            const lastSyncTime = await idb.getVariantLastSyncTime();
+            
+            if (cachedVariants.length > 0) {
+              console.log('Returning cached variants for dish:', dishId);
+              return Promise.resolve({
+                data: {
+                  success: true,
+                  data: cachedVariants,
+                  isOfflineData: true,
+                  lastSyncTime
+                }
+              });
+            }
+          }
+        }
+        
+        // For mutation requests (POST, PUT, DELETE), queue them for later
+        else if (operationType) {
+          const operationId = uuidv4();
+          
+          // Generate temp ID for create operations
+          const tempId = operationType.includes('CREATE') ? generateTempId() : null;
+          
+          // Capture detailed error information for category creation
+          let errorInfo = null;
+          if (operationType === OPERATION_TYPES.CREATE_CATEGORY) {
+            errorInfo = captureDetailedCategoryError(error, request);
           }
           
-          const lastSyncTime = await idb.getDishLastSyncTime();
+          // Apply optimistic update
+          const optimisticResult = await applyOptimisticUpdate(
+            operationType,
+            request.url,
+            requestData,
+            tempId
+          );
           
-          if (cachedDishes.length > 0) {
-            console.log('Returning cached dishes');
-            return Promise.resolve({
-              data: {
-                success: true,
-                data: cachedDishes,
-                isOfflineData: true,
-                lastSyncTime
-              }
-            });
-          }
-        } else if (request.url.includes('/api/menu/variants')) {
-          const cachedVariants = await idb.getVariants();
-          const lastSyncTime = await idb.getVariantLastSyncTime();
+          // Queue the operation with enhanced error details if available
+          await idb.queueOperation({
+            id: operationId,
+            type: operationType,
+            method: request.method,
+            url: request.url,
+            data: requestData,
+            tempId,
+            headers: request.headers,
+            errorInfo // Add the enhanced error info
+          });
           
-          if (cachedVariants.length > 0) {
-            console.log('Returning cached variants');
-            return Promise.resolve({
-              data: {
-                success: true,
-                data: cachedVariants,
-                isOfflineData: true,
-                lastSyncTime
-              }
-            });
-          }
-        }else if (request.url.includes('/api/menu/dishes/') && request.url.includes('/variants')) {
-          // Extract dish ID from URL
-          const urlParts = request.url.split('/');
-          const dishIdIndex = urlParts.indexOf('dishes') + 1;
-          const dishId = urlParts[dishIdIndex];
+          // Try to register for background sync
+          await registerBackgroundSync(operationId);
           
-          const cachedVariants = await idb.getVariantsByDish(dishId);
-          const lastSyncTime = await idb.getVariantLastSyncTime();
-          
-          if (cachedVariants.length > 0) {
-            console.log('Returning cached variants for dish:', dishId);
-            return Promise.resolve({
-              data: {
-                success: true,
-                data: cachedVariants,
-                isOfflineData: true,
-                lastSyncTime
-              }
-            });
-          }
+          // Return a mock successful response with the optimistic result and error info if available
+          return Promise.resolve({
+            data: {
+              success: true,
+              message: errorInfo?.userMessage || 'Operation queued for when you are back online',
+              isOfflineOperation: true,
+              operationId,
+              data: optimisticResult,
+              errorInfo // Include this in the response for better UI feedback
+            }
+          });
         }
       }
       
-      // For mutation requests (POST, PUT, DELETE), queue them for later
-      else if (operationType) {
-        const operationId = uuidv4();
-        
-        // Generate temp ID for create operations
-        const tempId = operationType.includes('CREATE') ? generateTempId() : null;
-        
-        // Capture detailed error information for category creation
-        let errorInfo = null;
-        if (operationType === OPERATION_TYPES.CREATE_CATEGORY) {
-          errorInfo = captureDetailedCategoryError(error, request);
-        }
-        
-        // Apply optimistic update
-        const optimisticResult = await applyOptimisticUpdate(
-          operationType,
-          request.url,
-          requestData,
-          tempId
-        );
-        
-        // Queue the operation with enhanced error details if available
-        await idb.queueOperation({
-          id: operationId,
-          type: operationType,
-          method: request.method,
-          url: request.url,
-          data: requestData,
-          tempId,
-          headers: request.headers,
-          errorInfo // Add the enhanced error info
-        });
-        
-        // Try to register for background sync
-        await registerBackgroundSync(operationId);
-        
-        // Return a mock successful response with the optimistic result and error info if available
-        return Promise.resolve({
-          data: {
-            success: true,
-            message: errorInfo?.userMessage || 'Operation queued for when you are back online',
-            isOfflineOperation: true,
-            operationId,
-            data: optimisticResult,
-            errorInfo // Include this in the response for better UI feedback
-          }
-        });
-      }
+      return Promise.reject(error);
     }
-    
-    return Promise.reject(error);
-  }
-);
+  );
+}
 
 export default enhancedAxiosWithAuth;
