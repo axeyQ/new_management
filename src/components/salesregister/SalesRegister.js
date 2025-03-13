@@ -28,7 +28,12 @@ import {
   AlertTitle,
   Snackbar,
   CircularProgress,
-  Collapse
+  Collapse,
+  TableContainer,
+  TableHead,
+  TableRow,
+  TableCell,
+  TableBody
 } from '@mui/material';
 import {
   Search as SearchIcon,
@@ -50,7 +55,8 @@ import {
   Visibility as VisibilityIcon,
   Warning as WarningIcon,
   Refresh as RefreshIcon,
-  ArrowBack
+  ArrowBack,
+  Close
 } from '@mui/icons-material';
 import axiosWithAuth from '@/lib/axiosWithAuth';
 import toast from 'react-hot-toast';
@@ -58,6 +64,7 @@ import toast from 'react-hot-toast';
 import PaymentDialog from './PaymentDialog';
 import KOTDialog from './KOTDialog';
 import KOTService from './KOTService';
+import { Table } from 'lucide-react';
 
 // Order storage helper functions
 const saveOrderToLocalStorage = (tableId, order) => {
@@ -356,6 +363,229 @@ const SalesRegister = ({
     }
     
     return null;
+  };
+
+  const handleSaveInvoice = async () => {
+    if (!currentOrder.itemsSold || currentOrder.itemsSold.length === 0) {
+      toast.error('Please add items to the order first');
+      return;
+    }
+    
+    setSavingOrder(true);
+    try {
+      // If we have an existing order, update it
+      if (currentOrder._id) {
+        // First ensure all items have been sent to the kitchen
+        const unsentItems = getUnsentItems();
+        if (unsentItems.length > 0) {
+          // Ask if user wants to send remaining items to kitchen
+          if (window.confirm('There are unsent items. Send them to kitchen first?')) {
+            await handleGenerateKOT();
+          }
+        }
+        
+        // Create/update the invoice
+        const invoiceResponse = await axiosWithAuth.post('/api/orders/invoice', {
+          salesOrder: currentOrder._id
+        });
+        
+        if (invoiceResponse.data.success) {
+          toast.success('Invoice saved successfully');
+          
+          // Update the order status to 'completed' if all items served
+          if (currentOrder.orderStatus === 'served') {
+            await axiosWithAuth.put(`/api/orders/${currentOrder._id}/status`, {
+              status: 'completed'
+            });
+            
+            // Update local state
+            setCurrentOrder(prev => ({
+              ...prev,
+              orderStatus: 'completed'
+            }));
+          }
+          
+          if (onOrderUpdate) {
+            onOrderUpdate(currentOrder);
+          }
+        } else {
+          toast.error('Failed to save invoice');
+        }
+      } else {
+        // This is a new order, first save the order then create invoice
+        // Ensure we have basic required fields
+        if (!currentOrder.orderMode) {
+          toast.error('Please select an order mode');
+          setSavingOrder(false);
+          return;
+        }
+        
+        if (currentOrder.orderMode === 'Dine-in' && !currentOrder.table) {
+          toast.error('Please select a table for dine-in orders');
+          setSavingOrder(false);
+          return;
+        }
+        
+        // Save the order first
+        const orderResponse = await axiosWithAuth.post('/api/orders', currentOrder);
+        
+        if (orderResponse.data.success) {
+          const savedOrder = orderResponse.data.data;
+          
+          // Create invoice for the new order
+          const invoiceResponse = await axiosWithAuth.post('/api/orders/invoice', {
+            salesOrder: savedOrder._id
+          });
+          
+          if (invoiceResponse.data.success) {
+            toast.success('Order and invoice saved successfully');
+            
+            // Update current order with saved data
+            setCurrentOrder(savedOrder);
+            
+            // Update URL with order ID
+            if (typeof window !== 'undefined') {
+              const url = new URL(window.location);
+              url.searchParams.set('orderId', savedOrder._id);
+              window.history.replaceState({}, '', url);
+            }
+            
+            if (onOrderUpdate) {
+              onOrderUpdate(savedOrder);
+            }
+          } else {
+            toast.warning('Order saved but invoice creation failed');
+          }
+        } else {
+          toast.error('Failed to save order');
+        }
+      }
+    } catch (error) {
+      console.error('Error saving invoice:', error);
+      toast.error(`Error: ${error.message || 'Failed to save invoice'}`);
+    } finally {
+      setSavingOrder(false);
+    }
+  };
+  
+  // Function to print an invoice
+  const handlePrintInvoice = async () => {
+    if (!currentOrder.itemsSold || currentOrder.itemsSold.length === 0) {
+      toast.error('Please add items to the order first');
+      return;
+    }
+    
+    setSavingOrder(true);
+    try {
+      let invoiceId;
+      
+      // Check if the order exists and has an ID
+      if (currentOrder._id) {
+        // Check if invoice already exists for this order
+        const invoiceCheckResponse = await axiosWithAuth.get(`/api/orders/invoice?orderId=${currentOrder._id}`);
+        
+        if (invoiceCheckResponse.data.success && invoiceCheckResponse.data.data.length > 0) {
+          // Invoice exists, use it
+          invoiceId = invoiceCheckResponse.data.data[0]._id;
+        } else {
+          // Create a new invoice
+          const invoiceResponse = await axiosWithAuth.post('/api/orders/invoice', {
+            salesOrder: currentOrder._id
+          });
+          
+          if (invoiceResponse.data.success) {
+            invoiceId = invoiceResponse.data.data._id;
+          } else {
+            throw new Error('Failed to create invoice');
+          }
+        }
+        
+        // Open the invoice in a new window for printing
+        if (invoiceId) {
+          window.open(`/print/invoice/${invoiceId}`, '_blank');
+          toast.success('Invoice opened for printing');
+          
+          // Mark the invoice as printed
+          await axiosWithAuth.put(`/api/orders/invoice/${invoiceId}`, {
+            isPrinted: true,
+            printedAt: new Date()
+          });
+        }
+      } else {
+        // This is a new order, save it first
+        toast.info('Saving order before printing...');
+        
+        // Save the order
+        const orderResponse = await axiosWithAuth.post('/api/orders', currentOrder);
+        
+        if (orderResponse.data.success) {
+          const savedOrder = orderResponse.data.data;
+          
+          // Create invoice for the new order
+          const invoiceResponse = await axiosWithAuth.post('/api/orders/invoice', {
+            salesOrder: savedOrder._id
+          });
+          
+          if (invoiceResponse.data.success) {
+            invoiceId = invoiceResponse.data.data._id;
+            
+            // Update current order with saved data
+            setCurrentOrder(savedOrder);
+            
+            // Update URL with order ID
+            if (typeof window !== 'undefined') {
+              const url = new URL(window.location);
+              url.searchParams.set('orderId', savedOrder._id);
+              window.history.replaceState({}, '', url);
+            }
+            
+            if (onOrderUpdate) {
+              onOrderUpdate(savedOrder);
+            }
+            
+            // Open the invoice in a new window for printing
+            if (invoiceId) {
+              window.open(`/print/invoice/${invoiceId}`, '_blank');
+              toast.success('Invoice opened for printing');
+              
+              // Mark the invoice as printed
+              await axiosWithAuth.put(`/api/orders/invoice/${invoiceId}`, {
+                isPrinted: true,
+                printedAt: new Date()
+              });
+            }
+          } else {
+            throw new Error('Failed to create invoice');
+          }
+        } else {
+          throw new Error('Failed to save order');
+        }
+      }
+    } catch (error) {
+      console.error('Error printing invoice:', error);
+      toast.error(`Error: ${error.message || 'Failed to print invoice'}`);
+    } finally {
+      setSavingOrder(false);
+    }
+  };
+  
+  // Function to print and save invoice
+  const handlePrintAndSave = async () => {
+    setSavingOrder(true);
+    try {
+      // First save the invoice
+      await handleSaveInvoice();
+      
+      // Then print it
+      await handlePrintInvoice();
+      
+      toast.success('Invoice saved and printed successfully');
+    } catch (error) {
+      console.error('Error in print and save:', error);
+      toast.error(`Error: ${error.message || 'Failed to print and save'}`);
+    } finally {
+      setSavingOrder(false);
+    }
   };
 
   // Function to group dishes by subcategory
@@ -2028,30 +2258,24 @@ const SalesRegister = ({
                 </Button>
               </Box>
               <Box display="flex" flexDirection="column" gap={1} mb={1}>
+              <Button
+  fullWidth
+  variant="contained"
+  color="primary"
+  onClick={handleSaveInvoice}
+  disabled={savingOrder}
+>
+  {savingOrder ? 'SAVING...' : 'SAVE INVOICE'}
+</Button>
                 <Button
-                  fullWidth
-                  variant="contained"
-                  color="primary"
-                  onClick={() => {
-                    // Save order logic
-                    toast.info('Save Invoice functionality');
-                  }}
-                  disabled={savingOrder}
-                >
-                  {savingOrder ? 'SAVING...' : 'SAVE INVOICE'}
-                </Button>
-                <Button
-                  fullWidth
-                  variant="contained"
-                  color="secondary"
-                  onClick={() => {
-                    // Print and save logic
-                    toast.info('Print & Save functionality');
-                  }}
-                  disabled={savingOrder}
-                >
-                  {savingOrder ? 'SAVING...' : 'PRINT & SAVE'}
-                </Button>
+  fullWidth
+  variant="contained"
+  color="secondary"
+  onClick={handlePrintAndSave}
+  disabled={savingOrder}
+>
+  {savingOrder ? 'SAVING...' : 'PRINT & SAVE'}
+</Button>
                 <Button
                   fullWidth
                   variant="contained"
@@ -2126,11 +2350,170 @@ const SalesRegister = ({
         </DialogContent>
       </Dialog>
 
-      {/* Payment Dialog would go here */}
-      
-      {/* Order Summary Dialog would go here */}
-      
-      {/* KOT Dialog would go here */}
+      <PaymentDialog 
+  open={openPaymentDialog} 
+  onClose={() => setOpenPaymentDialog(false)} 
+  order={currentOrder} 
+  onSuccess={(updatedOrder) => {
+    setOpenPaymentDialog(false);
+    handleOrderUpdate(updatedOrder);
+    toast.success('Payment processed successfully');
+  }} 
+/>
+
+{/* KOT Dialog */}
+<KOTDialog 
+  open={openKotDialog}
+  onClose={() => setOpenKotDialog(false)}
+  order={currentOrder}
+  onSuccess={(kot) => {
+    setOpenKotDialog(false);
+    handleKotSuccess(kot);
+  }}
+/>
+
+{/* Order Summary Dialog */}
+<Dialog
+  open={openSummaryDialog}
+  onClose={() => setOpenSummaryDialog(false)}
+  maxWidth="md"
+  fullWidth
+>
+  <DialogTitle>
+    Order Summary
+    <IconButton
+      onClick={() => setOpenSummaryDialog(false)}
+      sx={{ position: 'absolute', right: 8, top: 8 }}
+    >
+      <Close />
+    </IconButton>
+  </DialogTitle>
+  <DialogContent>
+    <Grid container spacing={2}>
+      <Grid item xs={12} md={6}>
+        <Typography variant="h6" gutterBottom>Order Details</Typography>
+        <Box sx={{ mb: 2 }}>
+          <Box display="flex" justifyContent="space-between" mb={1}>
+            <Typography variant="body2">Order Mode:</Typography>
+            <Typography variant="body2">{currentOrder.orderMode}</Typography>
+          </Box>
+          <Box display="flex" justifyContent="space-between" mb={1}>
+            <Typography variant="body2">Customer:</Typography>
+            <Typography variant="body2">{currentOrder.customer?.name || 'Guest'}</Typography>
+          </Box>
+          {currentOrder.orderMode === 'Dine-in' && (
+            <Box display="flex" justifyContent="space-between" mb={1}>
+              <Typography variant="body2">Table:</Typography>
+              <Typography variant="body2">
+                {selectedTable ? `Table ${selectedTable.tableName}` : 'None'}
+              </Typography>
+            </Box>
+          )}
+          <Box display="flex" justifyContent="space-between" mb={1}>
+            <Typography variant="body2">Invoice Number:</Typography>
+            <Typography variant="body2">{currentOrder.invoiceNumber || 'Not generated'}</Typography>
+          </Box>
+          {currentOrder.refNum && (
+            <Box display="flex" justifyContent="space-between" mb={1}>
+              <Typography variant="body2">Reference:</Typography>
+              <Typography variant="body2">{currentOrder.refNum}</Typography>
+            </Box>
+          )}
+          <Box display="flex" justifyContent="space-between" mb={1}>
+            <Typography variant="body2">Status:</Typography>
+            <Typography variant="body2">{currentOrder.orderStatus}</Typography>
+          </Box>
+        </Box>
+      </Grid>
+      <Grid item xs={12} md={6}>
+        <Typography variant="h6" gutterBottom>Financial Details</Typography>
+        <Box sx={{ mb: 2 }}>
+          <Box display="flex" justifyContent="space-between" mb={1}>
+            <Typography variant="body2">Subtotal:</Typography>
+            <Typography variant="body2">₹{currentOrder.subtotalAmount.toFixed(2)}</Typography>
+          </Box>
+          <Box display="flex" justifyContent="space-between" mb={1}>
+            <Typography variant="body2">Tax:</Typography>
+            <Typography variant="body2">₹{currentOrder.totalTaxAmount.toFixed(2)}</Typography>
+          </Box>
+          {currentOrder.discount && currentOrder.discount.discountValue > 0 && (
+            <Box display="flex" justifyContent="space-between" mb={1}>
+              <Typography variant="body2">Discount:</Typography>
+              <Typography variant="body2" color="error">
+                -₹{currentOrder.discount.discountValue.toFixed(2)}
+              </Typography>
+            </Box>
+          )}
+          {currentOrder.deliveryCharge > 0 && (
+            <Box display="flex" justifyContent="space-between" mb={1}>
+              <Typography variant="body2">Delivery Charge:</Typography>
+              <Typography variant="body2">₹{currentOrder.deliveryCharge.toFixed(2)}</Typography>
+            </Box>
+          )}
+          {currentOrder.packagingCharge > 0 && (
+            <Box display="flex" justifyContent="space-between" mb={1}>
+              <Typography variant="body2">Packaging Charge:</Typography>
+              <Typography variant="body2">₹{currentOrder.packagingCharge.toFixed(2)}</Typography>
+            </Box>
+          )}
+          <Divider sx={{ my: 1 }} />
+          <Box display="flex" justifyContent="space-between" mb={1}>
+            <Typography variant="subtitle1" fontWeight="bold">Total:</Typography>
+            <Typography variant="subtitle1" fontWeight="bold">
+              ₹{currentOrder.totalAmount.toFixed(2)}
+            </Typography>
+          </Box>
+        </Box>
+      </Grid>
+      <Grid item xs={12}>
+        <Typography variant="h6" gutterBottom>Order Items</Typography>
+        <TableContainer component={Paper} variant="outlined">
+          <Table size="small">
+            <TableHead>
+              <TableRow>
+                <TableCell>Item</TableCell>
+                <TableCell>Variant</TableCell>
+                <TableCell align="center">Qty</TableCell>
+                <TableCell align="right">Price</TableCell>
+                <TableCell align="right">Total</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {currentOrder.itemsSold.map((item, index) => (
+                <TableRow key={item._id || index}>
+                  <TableCell>{item.dishName}</TableCell>
+                  <TableCell>{item.variantName || '-'}</TableCell>
+                  <TableCell align="center">{item.quantity}</TableCell>
+                  <TableCell align="right">₹{item.price.toFixed(2)}</TableCell>
+                  <TableCell align="right">₹{(item.price * item.quantity).toFixed(2)}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Grid>
+    </Grid>
+  </DialogContent>
+  <DialogActions>
+    <Button 
+      variant="contained" 
+      color="primary" 
+      startIcon={<PrintIcon />}
+      onClick={() => {
+        setOpenSummaryDialog(false);
+        handlePrintInvoice();
+      }}
+    >
+      Print Invoice
+    </Button>
+    <Button 
+      onClick={() => setOpenSummaryDialog(false)} 
+      color="secondary"
+    >
+      Close
+    </Button>
+  </DialogActions>
+</Dialog>
       
       {/* Confirm Reset Dialog */}
       <Dialog open={openConfirmResetDialog} onClose={() => setOpenConfirmResetDialog(false)}>

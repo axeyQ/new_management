@@ -14,6 +14,7 @@ import {
   ListItemText,
   Collapse,
   IconButton,
+  Table,
 } from '@mui/material';
 import {
   Dashboard as DashboardIcon,
@@ -37,6 +38,8 @@ import {
   Store as StoreIcon,
   AccessTime as TimeIcon,
   PowerOff as PowerOffIcon,
+  Chair,
+  ChairSharp,
 } from '@mui/icons-material';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -303,11 +306,29 @@ const Sidebar = ({ open, toggleDrawer }) => {
             selected={isActive('/dashboard/orders')}
           >
             <ListItemIcon>
-              <ReceiptIcon />
+            <ReceiptIcon />
+
             </ListItemIcon>
             <ListItemText primary="Orders" />
           </ListItemButton>
         </ListItem>
+
+        <ListItem disablePadding>
+          <ListItemButton
+            component={Link}
+            href="/dashboard/orders/tableview"
+            selected={isActive('/dashboard/orders/tableview')}
+          >
+          
+            <ListItemIcon>
+            <ChairSharp />
+
+            </ListItemIcon>
+            <ListItemText primary="Table View" />
+          </ListItemButton>
+        </ListItem>
+
+        
 
         {/* Kitchen Display System */}
         <ListItem disablePadding>
