@@ -6,6 +6,7 @@ import KOT from '@/models/KOT';
 import SalesOrder from '@/models/SalesOrder';
 import { authMiddleware } from '@/lib/auth';
 import { notifyNewKot } from '@/lib/websocket-server';
+import AddOn from '@/models/AddOn';
 
 // Get all KOTs with optional filters
 export const GET = authMiddleware(async (request) => {
@@ -83,12 +84,11 @@ export const GET = authMiddleware(async (request) => {
   }
 });
 
-// Create a new KOT
-const createHandler = async (request) => {
+export const POST = authMiddleware(async (request) => {
   try {
     await connectDB();
     const kotData = await request.json();
-
+    
     // Validate required fields
     if (!kotData.salesOrder || !kotData.items || kotData.items.length === 0) {
       return NextResponse.json(
@@ -96,7 +96,7 @@ const createHandler = async (request) => {
         { status: 400 }
       );
     }
-
+    
     // Check if the sales order exists
     const salesOrder = await SalesOrder.findById(kotData.salesOrder);
     if (!salesOrder) {
@@ -105,7 +105,7 @@ const createHandler = async (request) => {
         { status: 404 }
       );
     }
-
+    
     // Add order details to KOT
     kotData.orderMode = salesOrder.orderMode;
     kotData.invoiceNum = salesOrder.invoiceNumber;
@@ -115,7 +115,7 @@ const createHandler = async (request) => {
       name: salesOrder.customer.name,
       phone: salesOrder.customer.phone
     };
-
+    
     // Process items to ensure they have all required fields
     kotData.items = kotData.items.map(item => ({
       dish: item.dish,
@@ -130,14 +130,117 @@ const createHandler = async (request) => {
       })),
       notes: item.notes || ''
     }));
-
+    
     // Add user info for tracking
     kotData.createdBy = request.user._id;
     kotData.updatedBy = request.user._id;
-
+    
     // Create the KOT
     const newKOT = await KOT.create(kotData);
-
+    
+    // CRITICAL FIX: Update the sales order to ensure it includes all items from this KOT
+    try {
+      // Get the current order items
+      const currentOrderItems = salesOrder.itemsSold || [];
+      
+      // Add KOT items that don't exist in the order yet
+      const kotItems = kotData.items;
+      let updatedOrderItems = [...currentOrderItems];
+      
+      // Track which items are already in the order
+      const orderItemKeys = new Map();
+      currentOrderItems.forEach(item => {
+        const key = `${item.dish}-${item.variant || 'none'}-${item.notes || ''}`;
+        orderItemKeys.set(key, item);
+      });
+      
+      // Check each KOT item and add it if not found in the order
+      kotItems.forEach(kotItem => {
+        const key = `${kotItem.dish}-${kotItem.variant || 'none'}-${kotItem.notes || ''}`;
+        
+        if (!orderItemKeys.has(key)) {
+          // This is a new item not in the order
+          const newOrderItem = {
+            dish: kotItem.dish,
+            dishName: kotItem.dishName,
+            variant: kotItem.variant || null,
+            variantName: kotItem.variantName || '',
+            quantity: kotItem.quantity,
+            price: kotItem.price || 0, // You may need to fetch the price
+            addOns: kotItem.addOns || [],
+            notes: kotItem.notes || ''
+          };
+          
+          updatedOrderItems.push(newOrderItem);
+        } else {
+          // Optionally merge quantities if needed
+          // For example:
+          // const existingItem = orderItemKeys.get(key);
+          // existingItem.quantity += kotItem.quantity;
+        }
+      });
+      
+      // Update the order with all items
+      salesOrder.itemsSold = updatedOrderItems;
+      
+      // Recalculate totals based on updated items
+      // This should use your existing calculation logic
+      let subtotalAmount = 0;
+      let totalTaxAmount = 0;
+      
+      // Calculate subtotal from all items
+      updatedOrderItems.forEach(item => {
+        subtotalAmount += item.price * item.quantity;
+        
+        // Add addon prices if any
+        if (item.addOns && item.addOns.length > 0) {
+          item.addOns.forEach(addon => {
+            subtotalAmount += addon.price || 0;
+          });
+        }
+      });
+      
+      // Calculate taxes
+      if (salesOrder.taxDetails && salesOrder.taxDetails.length > 0) {
+        salesOrder.taxDetails.forEach(tax => {
+          const taxAmount = (subtotalAmount * tax.taxRate) / 100;
+          tax.taxAmount = parseFloat(taxAmount.toFixed(2));
+          totalTaxAmount += tax.taxAmount;
+        });
+      }
+      
+      // Calculate discount
+      let discountAmount = 0;
+      if (salesOrder.discount) {
+        if (salesOrder.discount.discountType === 'percentage') {
+          discountAmount = (subtotalAmount * salesOrder.discount.discountPercentage) / 100;
+        } else {
+          discountAmount = salesOrder.discount.discountValue;
+        }
+        salesOrder.discount.discountValue = parseFloat(discountAmount.toFixed(2));
+      }
+      
+      // Set additional charges
+      const packagingCharge = salesOrder.packagingCharge || 0;
+      const deliveryCharge = salesOrder.deliveryCharge || 0;
+      
+      // Calculate total amount
+      const totalAmount = subtotalAmount + totalTaxAmount + deliveryCharge + packagingCharge - discountAmount;
+      
+      // Update the order with the new totals
+      salesOrder.subtotalAmount = parseFloat(subtotalAmount.toFixed(2));
+      salesOrder.totalTaxAmount = parseFloat(totalTaxAmount.toFixed(2));
+      salesOrder.totalAmount = parseFloat(totalAmount.toFixed(2));
+      
+      // Save the updated order
+      await salesOrder.save();
+      console.log(`Order ${salesOrder._id} updated with KOT items`);
+      
+    } catch (orderUpdateError) {
+      console.error('Error updating order with KOT items:', orderUpdateError);
+      // Continue even if order update fails, so KOT is still created
+    }
+    
     // Populate necessary fields for response
     const populatedKOT = await KOT.findById(newKOT._id)
       .populate('table')
@@ -158,10 +261,7 @@ const createHandler = async (request) => {
         path: 'createdBy',
         select: 'username'
       });
-
-    // Send WebSocket notification for new KOT
-    notifyNewKot(populatedKOT);
-
+    
     return NextResponse.json({
       success: true,
       message: 'KOT created successfully',
@@ -174,7 +274,4 @@ const createHandler = async (request) => {
       { status: 500 }
     );
   }
-};
-
-// Only authenticated users can create KOTs
-export const POST = authMiddleware(createHandler);
+});

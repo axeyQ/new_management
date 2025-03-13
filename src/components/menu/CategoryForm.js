@@ -1,4 +1,3 @@
-// src/components/menu/CategoryForm.js - Enhanced version
 'use client';
 import { useState, useEffect } from 'react';
 import {
@@ -16,10 +15,9 @@ import {
 } from '@mui/material';
 import { CloudOff as OfflineIcon } from '@mui/icons-material';
 import toast from 'react-hot-toast';
-import { v4 as uuidv4 } from 'uuid';
 import enhancedAxiosWithAuth from '@/lib/enhancedAxiosWithAuth';
+import * as idb from '@/lib/indexedDBService';
 import { useNetwork } from '@/context/NetworkContext';
-import { ErrorRecoveryUI } from '@/lib/errorRecoverySystem';
 
 const CategoryForm = ({ category, onSuccess, onCancel }) => {
   const [formData, setFormData] = useState({
@@ -27,16 +25,67 @@ const CategoryForm = ({ category, onSuccess, onCancel }) => {
     image: category?.image || '',
     parentCategory: category?.parentCategory || 'food',
   });
-  
   const [loading, setLoading] = useState(false);
   const [validationErrors, setValidationErrors] = useState({});
   const { isOnline } = useNetwork();
-  
+
   // Reset validation errors when form data changes
   useEffect(() => {
     setValidationErrors({});
   }, [formData]);
+
+  const handleOfflineSubmission = async (formData, category, onSuccess) => {
+    console.log('Emergency offline handler triggered for Category');
+    // Generate a temporary ID
+    const tempId = `temp_${Date.now()}`;
   
+    // Create a temporary category object with the form data
+    const tempCategory = {
+      ...formData,
+      _id: tempId,
+      isTemp: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      stockStatus: {
+        isOutOfStock: false,
+        autoRestock: true,
+        orderModes: {}
+      }
+    };
+    
+    // Handle success message
+    toast.success(
+      category
+        ? 'Category will be updated when you are back online'
+        : 'Category will be created when you are back online'
+    );
+    
+    // Call the onSuccess callback with the temporary data
+    onSuccess(tempCategory);
+    
+    // Also try to manually save to IndexedDB if possible
+    try {
+      // Save to IndexedDB
+      await idb.updateCategory(tempCategory);
+      
+      // Also queue the operation
+      await idb.queueOperation({
+        id: tempId,
+        type: category ? 'UPDATE_CATEGORY' : 'CREATE_CATEGORY',
+        method: category ? 'put' : 'post',
+        url: category ? `/api/menu/categories/${category._id}` : '/api/menu/categories',
+        data: formData,
+        tempId: tempId,
+        timestamp: new Date().toISOString()
+      });
+      
+      console.log(`Queued ${category ? 'UPDATE' : 'CREATE'}_CATEGORY operation with tempId: ${tempId}`);
+    } catch (e) {
+      console.log('Manual IndexedDB save failed', e);
+      // This is just a backup, so we don't need to handle the error
+    }
+  };
+
   const validateForm = () => {
     const errors = {};
     
@@ -55,7 +104,7 @@ const CategoryForm = ({ category, onSuccess, onCancel }) => {
     setValidationErrors(errors);
     return Object.keys(errors).length === 0;
   };
-  
+
   const isValidUrl = (string) => {
     try {
       new URL(string);
@@ -64,7 +113,7 @@ const CategoryForm = ({ category, onSuccess, onCancel }) => {
       return false;
     }
   };
-  
+
   const handleChange = (e) => {
     const { name, value } = e.target;
     setFormData((prev) => ({
@@ -72,7 +121,53 @@ const CategoryForm = ({ category, onSuccess, onCancel }) => {
       [name]: value,
     }));
   };
-  
+
+  const saveCategoryToIndexedDB = async (categoryData, isTemp = true) => {
+    try {
+      // Generate a temp ID if needed
+      const tempId = isTemp ? `temp_${Date.now()}` : categoryData._id;
+      
+      // Prepare category data with required fields
+      const categoryToSave = {
+        ...categoryData,
+        _id: tempId,
+        isTemp: isTemp,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        stockStatus: categoryData.stockStatus || {
+          isOutOfStock: false,
+          autoRestock: true,
+          orderModes: {}
+        }
+      };
+      
+      console.log(`Saving ${isTemp ? 'temporary' : ''} category to IndexedDB:`, categoryToSave);
+      
+      // Save to IndexedDB
+      await idb.updateCategory(categoryToSave);
+      
+      // If temp category, also queue the operation for later sync
+      if (isTemp) {
+        await idb.queueOperation({
+          id: `op_${Date.now()}`,
+          type: 'CREATE_CATEGORY',
+          method: 'post',
+          url: '/api/menu/categories',
+          data: categoryData, // Original form data
+          tempId: tempId,
+          timestamp: new Date().toISOString()
+        });
+        
+        console.log(`Queued CREATE_CATEGORY operation with tempId: ${tempId}`);
+      }
+      
+      return { success: true, data: categoryToSave };
+    } catch (error) {
+      console.error('Error saving category to IndexedDB:', error);
+      return { success: false, error };
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -81,17 +176,40 @@ const CategoryForm = ({ category, onSuccess, onCancel }) => {
       return;
     }
     
+    // Check if we're offline first - handle it directly if we are
+    if (!navigator.onLine) {
+      handleOfflineSubmission(formData, category, onSuccess);
+      return;
+    }
+    
     setLoading(true);
     
+    // Set a timeout to prevent the form from hanging forever
+    const timeoutId = setTimeout(() => {
+      console.log('Form submission timeout - forcing completion');
+      setLoading(false);
+      
+      // If we're offline, handle it directly
+      if (!navigator.onLine) {
+        handleOfflineSubmission(formData, category, onSuccess);
+      } else {
+        toast.error('The request is taking too long. Please try again.');
+      }
+    }, 5000); // 5 second timeout
+    
     try {
-      const url = category
-        ? `/api/menu/categories/${category._id}`
-        : '/api/menu/categories';
-        
+      const url = category ? `/api/menu/categories/${category._id}` : '/api/menu/categories';
+      const method = category ? 'put' : 'post';
+      
+      console.log(`Submitting form to ${url} with method ${method}`);
+      
       // Use the enhanced axios instance
-      const res = category
-        ? await enhancedAxiosWithAuth.put(url, formData)
-        : await enhancedAxiosWithAuth.post(url, formData);
+      const res = await enhancedAxiosWithAuth[method](url, formData);
+      
+      // Clear the timeout since we got a response
+      clearTimeout(timeoutId);
+      
+      console.log('Form submission response:', res.data);
       
       if (res.data.isOfflineOperation) {
         // If offline operation
@@ -115,6 +233,28 @@ const CategoryForm = ({ category, onSuccess, onCancel }) => {
     } catch (error) {
       console.error('Error submitting form:', error.response?.data || error.message);
       
+      // Check if this is a network error during offline mode
+      if (!error.response && !navigator.onLine) {
+        console.log('Handling offline submission with direct IndexedDB save');
+        
+        // Explicitly save to IndexedDB and queue operation
+        const result = await saveCategoryToIndexedDB(formData);
+        
+        if (result.success) {
+          toast.success(
+            category
+              ? 'Category will be updated when you are back online'
+              : 'Category will be created when you are back online'
+          );
+          onSuccess(result.data);
+        } else {
+          toast.error('Failed to save category for offline use');
+        }
+        
+        setLoading(false);
+        return;
+      }
+      
       // Handle validation errors from server
       if (error.response?.data?.errors) {
         setValidationErrors(error.response.data.errors);
@@ -122,10 +262,13 @@ const CategoryForm = ({ category, onSuccess, onCancel }) => {
         toast.error(error.response?.data?.message || 'An error occurred');
       }
     } finally {
-      setLoading(false);
+      // Make absolutely sure loading state is cleared except if we've already handled offline submission
+      if (navigator.onLine) {
+        setLoading(false);
+      }
     }
   };
-  
+
   return (
     <Paper sx={{ p: 3, maxWidth: 500, mx: 'auto' }}>
       <Typography variant="h6" mb={3}>
@@ -133,17 +276,18 @@ const CategoryForm = ({ category, onSuccess, onCancel }) => {
       </Typography>
       
       {!isOnline && (
-        <Alert 
-          severity="info" 
+        <Alert
+          severity="info"
           icon={<OfflineIcon />}
           sx={{ mb: 3 }}
         >
-          You are offline. Changes will be saved locally and synchronized when you&apos;re back online.
+          You are offline. Changes will be saved locally and synchronized when you
+          &apos;re back online.
         </Alert>
       )}
       
       {category?.isTemp && (
-        <Alert 
+        <Alert
           severity="warning"
           sx={{ mb: 3 }}
         >
@@ -197,6 +341,7 @@ const CategoryForm = ({ category, onSuccess, onCancel }) => {
           >
             Cancel
           </Button>
+          
           <Button
             type="submit"
             variant="contained"

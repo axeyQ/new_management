@@ -115,6 +115,121 @@ const SubCategoryForm = ({ subCategory, onSuccess, onCancel }) => {
     }
   };
 
+  const handleOfflineSubmission = async (formData, subCategory, onSuccess) => {
+    console.log('Emergency offline handler triggered for SubCategory');
+    
+    // Generate a temporary ID
+    const tempId = `temp_${Date.now()}`;
+    
+    // Create a temporary subcategory object with the form data
+    const tempSubCategory = {
+      ...formData,
+      _id: tempId,
+      isTemp: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      stockStatus: {
+        isOutOfStock: false,
+        autoRestock: true,
+        orderModes: {}
+      }
+    };
+    
+    // Handle success message
+    toast.success(
+      subCategory
+        ? 'Subcategory will be updated when you are back online'
+        : 'Subcategory will be created when you are back online'
+    );
+    
+    // Call the onSuccess callback with the temporary data
+    onSuccess(tempSubCategory);
+    
+    // Also try to manually save to IndexedDB if possible
+    try {
+      // Save to IndexedDB
+      await idb.updateSubcategory(tempSubCategory);
+      
+      // Also queue the operation
+      await idb.queueOperation({
+        id: tempId,
+        type: subCategory ? 'UPDATE_SUBCATEGORY' : 'CREATE_SUBCATEGORY',
+        method: subCategory ? 'put' : 'post',
+        url: subCategory ? `/api/menu/subcategories/${subCategory._id}` : '/api/menu/subcategories',
+        data: formData,
+        tempId: tempId,
+        timestamp: new Date().toISOString()
+      });
+      
+      console.log(`Queued ${subCategory ? 'UPDATE' : 'CREATE'}_SUBCATEGORY operation with tempId: ${tempId}`);
+    } catch (e) {
+      console.log('Manual IndexedDB save failed', e);
+      // This is just a backup, so we don't need to handle the error
+    }
+  };
+  
+  // Add this function for better IndexedDB saving with error recovery
+  const saveSubcategoryToIndexedDB = async (subcategoryData, isTemp = true) => {
+    try {
+      // Generate a temp ID if needed
+      const tempId = isTemp ? `temp_${Date.now()}` : subcategoryData._id;
+      
+      // Prepare subcategory data with required fields
+      const subcategoryToSave = {
+        ...subcategoryData,
+        _id: tempId,
+        isTemp: isTemp,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        stockStatus: subcategoryData.stockStatus || {
+          isOutOfStock: false,
+          autoRestock: true,
+          orderModes: {}
+        }
+      };
+      
+      // Handle category relationship properly
+      // If category is an object with _id, keep just the _id
+      if (subcategoryToSave.category && typeof subcategoryToSave.category === 'object' && subcategoryToSave.category._id) {
+        subcategoryToSave.originalCategory = subcategoryToSave.category;
+        subcategoryToSave.category = subcategoryToSave.category._id;
+      }
+      
+      console.log(`Saving ${isTemp ? 'temporary' : ''} subcategory to IndexedDB:`, subcategoryToSave);
+      
+      // Save to IndexedDB
+      await idb.updateSubcategory(subcategoryToSave);
+      
+      // If temp subcategory, also queue the operation for later sync
+      if (isTemp) {
+        // Prepare clean data for sync
+        const cleanData = { ...subcategoryData };
+        
+        // Make sure category is just an ID for the API
+        if (cleanData.category && typeof cleanData.category === 'object' && cleanData.category._id) {
+          cleanData.category = cleanData.category._id;
+        }
+        
+        await idb.queueOperation({
+          id: `op_${Date.now()}`,
+          type: 'CREATE_SUBCATEGORY',
+          method: 'post',
+          url: '/api/menu/subcategories',
+          data: cleanData, // Cleaned form data
+          tempId: tempId,
+          timestamp: new Date().toISOString()
+        });
+        
+        console.log(`Queued CREATE_SUBCATEGORY operation with tempId: ${tempId}`);
+      }
+      
+      return { success: true, data: subcategoryToSave };
+    } catch (error) {
+      console.error('Error saving subcategory to IndexedDB:', error);
+      return { success: false, error };
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     
@@ -123,17 +238,48 @@ const SubCategoryForm = ({ subCategory, onSuccess, onCancel }) => {
       return;
     }
     
+    // Check if we're offline first - handle it directly if we are
+    if (!navigator.onLine) {
+      setLoading(true); // Start loading
+      try {
+        await handleOfflineSubmission(formData, subCategory, onSuccess);
+      } catch (error) {
+        console.error('Offline submission error:', error);
+        toast.error('Failed to save subcategory for offline use');
+      } finally {
+        setLoading(false); // Make sure loading is reset in offline mode
+      }
+      return;
+    }
+    
     setLoading(true);
     
+    // Set a timeout to prevent the form from hanging forever
+    const timeoutId = setTimeout(() => {
+      console.log('Form submission timeout - forcing completion');
+      setLoading(false);
+      
+      // If we're offline, handle it directly
+      if (!navigator.onLine) {
+        handleOfflineSubmission(formData, subCategory, onSuccess);
+      } else {
+        toast.error('The request is taking too long. Please try again.');
+      }
+    }, 5000); // 5 second timeout
+    
     try {
-      const url = subCategory
-        ? `/api/menu/subcategories/${subCategory._id}`
-        : '/api/menu/subcategories';
-        
-      // Use our enhanced axios instance
-      const res = subCategory
-        ? await enhancedAxiosWithAuth.put(url, formData)
-        : await enhancedAxiosWithAuth.post(url, formData);
+      const url = subCategory ? `/api/menu/subcategories/${subCategory._id}` : '/api/menu/subcategories';
+      const method = subCategory ? 'put' : 'post';
+      
+      console.log(`Submitting form to ${url} with method ${method}`);
+      
+      // Use the enhanced axios instance
+      const res = await enhancedAxiosWithAuth[method](url, formData);
+      
+      // Clear the timeout since we got a response
+      clearTimeout(timeoutId);
+      
+      console.log('Form submission response:', res.data);
       
       if (res.data.isOfflineOperation) {
         // If offline operation
@@ -157,6 +303,28 @@ const SubCategoryForm = ({ subCategory, onSuccess, onCancel }) => {
     } catch (error) {
       console.error('Error submitting form:', error.response?.data || error.message);
       
+      // Check if this is a network error during offline mode
+      if (!error.response && !navigator.onLine) {
+        console.log('Handling offline submission with direct IndexedDB save');
+        
+        // Explicitly save to IndexedDB and queue operation
+        const result = await saveSubcategoryToIndexedDB(formData);
+        
+        if (result.success) {
+          toast.success(
+            subCategory
+              ? 'Subcategory will be updated when you are back online'
+              : 'Subcategory will be created when you are back online'
+          );
+          onSuccess(result.data);
+        } else {
+          toast.error('Failed to save subcategory for offline use');
+        }
+        
+        setLoading(false);
+        return;
+      }
+      
       // Handle validation errors from server
       if (error.response?.data?.errors) {
         setValidationErrors(error.response.data.errors);
@@ -164,10 +332,12 @@ const SubCategoryForm = ({ subCategory, onSuccess, onCancel }) => {
         toast.error(error.response?.data?.message || 'An error occurred');
       }
     } finally {
-      setLoading(false);
+      // Make absolutely sure loading state is cleared except if we've already handled offline submission
+      if (navigator.onLine) {
+        setLoading(false);
+      }
     }
   };
-
   return (
     <Paper sx={{ p: 3, maxWidth: 500, mx: 'auto' }}>
       <Typography variant="h6" mb={3}>

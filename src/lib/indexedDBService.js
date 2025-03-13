@@ -1,9 +1,12 @@
-// src/lib/indexedDBService.js
 const DB_NAME = 'MenuManagerOfflineDB';
-const DB_VERSION = 1;
+const DB_VERSION = 4; // Increment DB version for schema update
 const STORES = {
   CATEGORIES: 'categories',
   SUBCATEGORIES: 'subcategories',
+  TABLES: 'tables',
+  TABLE_TYPES: 'tableTypes',
+  DISHES: 'dishes',            // New store
+  VARIANTS: 'variants',        // New store
   PENDING_OPERATIONS: 'pendingOperations',
   META: 'meta'
 };
@@ -28,27 +31,52 @@ export const initDB = () => {
     
     request.onupgradeneeded = (event) => {
       const db = event.target.result;
+      console.log(`Upgrading IndexedDB from version ${event.oldVersion} to ${event.newVersion}`);
       
       // Create object stores if they don't exist
       if (!db.objectStoreNames.contains(STORES.CATEGORIES)) {
+        console.log('Creating categories store');
         db.createObjectStore(STORES.CATEGORIES, { keyPath: '_id' });
       }
       
       if (!db.objectStoreNames.contains(STORES.SUBCATEGORIES)) {
+        console.log('Creating subcategories store');
         db.createObjectStore(STORES.SUBCATEGORIES, { keyPath: '_id' });
       }
       
+      // Create stores for tables and table types
+      if (!db.objectStoreNames.contains(STORES.TABLES)) {
+        console.log('Creating tables store');
+        db.createObjectStore(STORES.TABLES, { keyPath: '_id' });
+      }
+      
+      if (!db.objectStoreNames.contains(STORES.TABLE_TYPES)) {
+        console.log('Creating tableTypes store');
+        db.createObjectStore(STORES.TABLE_TYPES, { keyPath: '_id' });
+      }
+
+      if (!db.objectStoreNames.contains(STORES.DISHES)) {
+        console.log('Creating dishes store');
+        db.createObjectStore(STORES.DISHES, { keyPath: '_id' });
+      }
+      
+      if (!db.objectStoreNames.contains(STORES.VARIANTS)) {
+        console.log('Creating variants store');
+        db.createObjectStore(STORES.VARIANTS, { keyPath: '_id' });
+      }
+      
       if (!db.objectStoreNames.contains(STORES.PENDING_OPERATIONS)) {
+        console.log('Creating pendingOperations store');
         db.createObjectStore(STORES.PENDING_OPERATIONS, { keyPath: 'id' });
       }
       
       if (!db.objectStoreNames.contains(STORES.META)) {
+        console.log('Creating meta store');
         db.createObjectStore(STORES.META, { keyPath: 'key' });
       }
     };
   });
 };
-
 /**
  * Perform a database operation with automatic connection handling
  * @param {string} storeName - Name of the object store
@@ -643,6 +671,935 @@ export const detectCategoryConflicts = async (serverCategories) => {
     return conflicts;
   } catch (error) {
     console.error('Error detecting category conflicts:', error);
+    return [];
+  }
+};
+
+/**
+ * Save multiple tables to IndexedDB
+ * @param {Array} tables - Array of table objects
+ * @returns {Promise<boolean>}
+ */
+export const saveTables = async (tables) => {
+  try {
+    await dbOperation(STORES.TABLES, 'readwrite', (transaction, store, resolve) => {
+      // Clear existing tables first
+      store.clear();
+      // Add all tables
+      tables.forEach(table => {
+        store.add(table);
+      });
+      // Save last sync time
+      const metaTransaction = transaction.db.transaction(STORES.META, 'readwrite');
+      const metaStore = metaTransaction.objectStore(STORES.META);
+      metaStore.put({ key: 'lastTableSync', value: new Date().toISOString() });
+      resolve(true);
+    });
+    console.log(`Saved ${tables.length} tables to IndexedDB`);
+    return true;
+  } catch (error) {
+    console.error('Error saving tables to IndexedDB:', error);
+    return false;
+  }
+};
+
+/**
+ * Get all tables from IndexedDB
+ * @returns {Promise<Array>}
+ */
+export const getTables = async () => {
+  try {
+    const result = await dbOperation(STORES.TABLES, 'readonly', (transaction, store, resolve) => {
+      const request = store.getAll();
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+    });
+    console.log(`Retrieved ${result?.length || 0} tables from IndexedDB`);
+    return result || [];
+  } catch (error) {
+    console.error('Error getting tables from IndexedDB:', error);
+    return [];
+  }
+};
+
+/**
+ * Get a single table by ID
+ * @param {string} id - Table ID
+ * @returns {Promise<Object|null>}
+ */
+export const getTableById = async (id) => {
+  try {
+    return await dbOperation(STORES.TABLES, 'readonly', (transaction, store, resolve) => {
+      const request = store.get(id);
+      request.onsuccess = () => {
+        resolve(request.result || null);
+      };
+    });
+  } catch (error) {
+    console.error(`Error getting table ${id} from IndexedDB:`, error);
+    return null;
+  }
+};
+
+/**
+ * Get tables filtered by type ID
+ * @param {string} typeId - Type ID to filter by
+ * @returns {Promise<Array>}
+ */
+export const getTablesByType = async (typeId) => {
+  try {
+    const tables = await getTables();
+    if (!typeId) return tables;
+    return tables.filter(table => 
+      table.tableType === typeId || 
+      (table.tableType && table.tableType._id === typeId)
+    );
+  } catch (error) {
+    console.error('Error filtering tables by type:', error);
+    return [];
+  }
+};
+
+/**
+ * Update or add a single table
+ * @param {Object} table - Table object with _id
+ * @returns {Promise<boolean>}
+ */
+export const updateTable = async (table) => {
+  try {
+    await dbOperation(STORES.TABLES, 'readwrite', (transaction, store, resolve) => {
+      store.put(table);
+      resolve(true);
+    });
+    return true;
+  } catch (error) {
+    console.error('Error updating table in IndexedDB:', error);
+    return false;
+  }
+};
+
+/**
+ * Delete a table by ID
+ * @param {string} id - Table ID
+ * @returns {Promise<boolean>}
+ */
+export const deleteTable = async (id) => {
+  try {
+    await dbOperation(STORES.TABLES, 'readwrite', (transaction, store, resolve) => {
+      store.delete(id);
+      resolve(true);
+    });
+    return true;
+  } catch (error) {
+    console.error(`Error deleting table ${id} from IndexedDB:`, error);
+    return false;
+  }
+};
+
+/**
+ * Save multiple table types to IndexedDB
+ * @param {Array} tableTypes - Array of table type objects
+ * @returns {Promise<boolean>}
+ */
+export const saveTableTypes = async (tableTypes) => {
+  try {
+    await dbOperation(STORES.TABLE_TYPES, 'readwrite', (transaction, store, resolve) => {
+      // Clear existing table types
+      store.clear();
+      // Add all table types
+      tableTypes.forEach(tableType => {
+        store.add(tableType);
+      });
+      // Save last sync time
+      const metaTransaction = transaction.db.transaction(STORES.META, 'readwrite');
+      const metaStore = metaTransaction.objectStore(STORES.META);
+      metaStore.put({ key: 'lastTableTypeSync', value: new Date().toISOString() });
+      resolve(true);
+    });
+    console.log(`Saved ${tableTypes.length} table types to IndexedDB`);
+    return true;
+  } catch (error) {
+    console.error('Error saving table types to IndexedDB:', error);
+    return false;
+  }
+};
+
+/**
+ * Get all table types from IndexedDB
+ * @returns {Promise<Array>}
+ */
+export const getTableTypes = async () => {
+  try {
+    const result = await dbOperation(STORES.TABLE_TYPES, 'readonly', (transaction, store, resolve) => {
+      const request = store.getAll();
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+    });
+    console.log(`Retrieved ${result?.length || 0} table types from IndexedDB`);
+    return result || [];
+  } catch (error) {
+    console.error('Error getting table types from IndexedDB:', error);
+    return [];
+  }
+};
+
+/**
+ * Get a single table type by ID
+ * @param {string} id - Table type ID
+ * @returns {Promise<Object|null>}
+ */
+export const getTableTypeById = async (id) => {
+  try {
+    return await dbOperation(STORES.TABLE_TYPES, 'readonly', (transaction, store, resolve) => {
+      const request = store.get(id);
+      request.onsuccess = () => {
+        resolve(request.result || null);
+      };
+    });
+  } catch (error) {
+    console.error(`Error getting table type ${id} from IndexedDB:`, error);
+    return null;
+  }
+};
+
+/**
+ * Update or add a single table type
+ * @param {Object} tableType - Table type object with _id
+ * @returns {Promise<boolean>}
+ */
+export const updateTableType = async (tableType) => {
+  try {
+    await dbOperation(STORES.TABLE_TYPES, 'readwrite', (transaction, store, resolve) => {
+      store.put(tableType);
+      resolve(true);
+    });
+    return true;
+  } catch (error) {
+    console.error('Error updating table type in IndexedDB:', error);
+    return false;
+  }
+};
+
+/**
+ * Delete a table type by ID
+ * @param {string} id - Table type ID
+ * @returns {Promise<boolean>}
+ */
+export const deleteTableType = async (id) => {
+  try {
+    await dbOperation(STORES.TABLE_TYPES, 'readwrite', (transaction, store, resolve) => {
+      store.delete(id);
+      resolve(true);
+    });
+    return true;
+  } catch (error) {
+    console.error(`Error deleting table type ${id} from IndexedDB:`, error);
+    return false;
+  }
+};
+
+/**
+ * Get tables with populated table type data
+ * This merges the table type data into the table objects
+ * @returns {Promise<Array>}
+ */
+export const getTablesWithTableTypes = async () => {
+  try {
+    const tables = await getTables();
+    const tableTypes = await getTableTypes();
+    
+    // Create a map of table types by ID for faster lookup
+    const tableTypeMap = tableTypes.reduce((map, tableType) => {
+      map[tableType._id] = tableType;
+      return map;
+    }, {});
+    
+    // Populate the tableType field for each table
+    return tables.map(table => {
+      // If tableType is just an ID string
+      if (typeof table.tableType === 'string') {
+        return {
+          ...table,
+          tableType: tableTypeMap[table.tableType] || table.tableType
+        };
+      }
+      // If tableType is already an object but might not have all properties
+      else if (table.tableType && table.tableType._id) {
+        const fullTableType = tableTypeMap[table.tableType._id];
+        if (fullTableType) {
+          return {
+            ...table,
+            tableType: fullTableType
+          };
+        }
+      }
+      // Return as-is if no matching table type found
+      return table;
+    });
+  } catch (error) {
+    console.error('Error getting tables with table types:', error);
+    return await getTables();
+  }
+};
+
+/**
+ * Get last sync time for tables or table types
+ * @param {string} type - 'table' or 'tableType'
+ * @returns {Promise<string|null>}
+ */
+export const getTableLastSyncTime = async (type = 'table') => {
+  try {
+    const key = type === 'table' ? 'lastTableSync' : 'lastTableTypeSync';
+    return await dbOperation(STORES.META, 'readonly', (transaction, store, resolve) => {
+      const request = store.get(key);
+      request.onsuccess = () => {
+        resolve(request.result ? request.result.value : null);
+      };
+    });
+  } catch (error) {
+    console.error(`Error getting ${type} last sync time from IndexedDB:`, error);
+    return null;
+  }
+};
+
+/**
+ * Detect conflicts for tables
+ * @param {Array} serverTables - Tables from the server
+ * @returns {Promise<Array>} - Array of potential conflicts
+ */
+export const detectTableConflicts = async (serverTables) => {
+  try {
+    const localTables = await getTables();
+    const conflicts = [];
+    
+    // Create maps for faster lookups
+    const serverMap = serverTables.reduce((map, table) => {
+      map[table._id] = table;
+      return map;
+    }, {});
+    
+    const localMap = localTables.reduce((map, table) => {
+      map[table._id] = table;
+      return map;
+    }, {});
+    
+    // Check for updates to the same table
+    for (const localTable of localTables) {
+      // Skip temporary tables
+      if (localTable.isTemp) continue;
+      
+      const serverTable = serverMap[localTable._id];
+      if (serverTable) {
+        // Compare updatedAt timestamps if available
+        const localUpdated = localTable.updatedAt ? new Date(localTable.updatedAt) : null;
+        const serverUpdated = serverTable.updatedAt ? new Date(serverTable.updatedAt) : null;
+        
+        // If both have valid timestamps and were updated after the last sync
+        if (localUpdated && serverUpdated) {
+          const lastSync = await getTableLastSyncTime('table');
+          const lastSyncDate = lastSync ? new Date(lastSync) : null;
+          
+          if (lastSyncDate && localUpdated > lastSyncDate && serverUpdated > lastSyncDate) {
+            // Potential conflict - both were updated since last sync
+            conflicts.push({
+              type: 'UPDATE_TABLE',
+              id: localTable._id,
+              localData: localTable,
+              serverData: serverTable,
+              endpoint: '/api/tables'
+            });
+          }
+        }
+      }
+    }
+    
+    // Check for local temp tables that might conflict with server ones
+    for (const localTable of localTables) {
+      if (localTable.isTemp) {
+        // Look for server tables with the same name
+        const matchingServerTable = serverTables.find(
+          t => t.tableName.toLowerCase() === localTable.tableName.toLowerCase()
+        );
+        
+        if (matchingServerTable) {
+          conflicts.push({
+            type: 'CREATE_TABLE',
+            tempId: localTable._id,
+            localData: localTable,
+            serverData: matchingServerTable,
+            endpoint: '/api/tables'
+          });
+        }
+      }
+    }
+    
+    return conflicts;
+  } catch (error) {
+    console.error('Error detecting table conflicts:', error);
+    return [];
+  }
+};
+
+/**
+ * Detect conflicts for table types
+ * @param {Array} serverTableTypes - Table types from the server
+ * @returns {Promise<Array>} - Array of potential conflicts
+ */
+export const detectTableTypeConflicts = async (serverTableTypes) => {
+  try {
+    const localTableTypes = await getTableTypes();
+    const conflicts = [];
+    
+    // Create maps for faster lookups
+    const serverMap = serverTableTypes.reduce((map, type) => {
+      map[type._id] = type;
+      return map;
+    }, {});
+    
+    const localMap = localTableTypes.reduce((map, type) => {
+      map[type._id] = type;
+      return map;
+    }, {});
+    
+    // Check for updates to the same table type
+    for (const localType of localTableTypes) {
+      // Skip temporary table types
+      if (localType.isTemp) continue;
+      
+      const serverType = serverMap[localType._id];
+      if (serverType) {
+        // Compare updatedAt timestamps if available
+        const localUpdated = localType.updatedAt ? new Date(localType.updatedAt) : null;
+        const serverUpdated = serverType.updatedAt ? new Date(serverType.updatedAt) : null;
+        
+        // If both have valid timestamps and were updated after the last sync
+        if (localUpdated && serverUpdated) {
+          const lastSync = await getTableLastSyncTime('tableType');
+          const lastSyncDate = lastSync ? new Date(lastSync) : null;
+          
+          if (lastSyncDate && localUpdated > lastSyncDate && serverUpdated > lastSyncDate) {
+            // Potential conflict - both were updated since last sync
+            conflicts.push({
+              type: 'UPDATE_TABLE_TYPE',
+              id: localType._id,
+              localData: localType,
+              serverData: serverType,
+              endpoint: '/api/tables/types'
+            });
+          }
+        }
+      }
+    }
+    
+    // Check for local temp table types that might conflict with server ones
+    for (const localType of localTableTypes) {
+      if (localType.isTemp) {
+        // Look for server table types with the same name
+        const matchingServerType = serverTableTypes.find(
+          t => t.tableTypeName.toLowerCase() === localType.tableTypeName.toLowerCase()
+        );
+        
+        if (matchingServerType) {
+          conflicts.push({
+            type: 'CREATE_TABLE_TYPE',
+            tempId: localType._id,
+            localData: localType,
+            serverData: matchingServerType,
+            endpoint: '/api/tables/types'
+          });
+        }
+      }
+    }
+    
+    return conflicts;
+  } catch (error) {
+    console.error('Error detecting table type conflicts:', error);
+    return [];
+  }
+};
+
+/**
+ * Force a reset of the database to ensure proper schema
+ * @returns {Promise<Object>} Result object with success status
+ */
+export const resetAndInitDB = async () => {
+  try {
+    // Close any open connections
+    const dbs = await window.indexedDB.databases();
+    for (const db of dbs) {
+      if (db.name === DB_NAME) {
+        await window.indexedDB.deleteDatabase(DB_NAME);
+        console.log("Deleted existing database to force schema update");
+        break;
+      }
+    }
+    
+    // Initialize with new schema
+    const db = await initDB();
+    console.log("Database initialized with new schema");
+    
+    // Initialize meta data
+    const transaction = db.transaction(STORES.META, 'readwrite');
+    const store = transaction.objectStore(STORES.META);
+    
+    // Set schema version
+    store.put({ key: 'schemaVersion', value: DB_VERSION });
+    store.put({ key: 'lastSchemaUpdate', value: new Date().toISOString() });
+    
+    return { success: true, message: "Database reset and initialized successfully" };
+  } catch (error) {
+    console.error("Error resetting database:", error);
+    return { success: false, error };
+  }
+};
+
+/**
+ * Save multiple dishes to IndexedDB
+ * @param {Array} dishes - Array of dish objects
+ * @returns {Promise<boolean>}
+ */
+export const saveDishes = async (dishes) => {
+  try {
+    await dbOperation(STORES.DISHES, 'readwrite', (transaction, store, resolve) => {
+      // Clear existing dishes first
+      store.clear();
+      // Add all dishes
+      dishes.forEach(dish => {
+        store.add(dish);
+      });
+      // Save last sync time
+      const metaTransaction = transaction.db.transaction(STORES.META, 'readwrite');
+      const metaStore = metaTransaction.objectStore(STORES.META);
+      metaStore.put({ key: 'lastDishSync', value: new Date().toISOString() });
+      resolve(true);
+    });
+    return true;
+  } catch (error) {
+    console.error('Error saving dishes to IndexedDB:', error);
+    return false;
+  }
+};
+
+/**
+ * Get all dishes from IndexedDB
+ * @returns {Promise<Array>}
+ */
+export const getDishes = async () => {
+  try {
+    return await dbOperation(STORES.DISHES, 'readonly', (transaction, store, resolve) => {
+      const request = store.getAll();
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+    });
+  } catch (error) {
+    console.error('Error getting dishes from IndexedDB:', error);
+    return [];
+  }
+};
+
+/**
+ * Get a single dish by ID
+ * @param {string} id - Dish ID
+ * @returns {Promise<Object|null>}
+ */
+export const getDishById = async (id) => {
+  try {
+    return await dbOperation(STORES.DISHES, 'readonly', (transaction, store, resolve) => {
+      const request = store.get(id);
+      request.onsuccess = () => {
+        resolve(request.result || null);
+      };
+    });
+  } catch (error) {
+    console.error(`Error getting dish ${id} from IndexedDB:`, error);
+    return null;
+  }
+};
+
+/**
+ * Update or add a single dish
+ * @param {Object} dish - Dish object with _id
+ * @returns {Promise<boolean>}
+ */
+export const updateDish = async (dish) => {
+  try {
+    await dbOperation(STORES.DISHES, 'readwrite', (transaction, store, resolve) => {
+      store.put(dish);
+      resolve(true);
+    });
+    return true;
+  } catch (error) {
+    console.error('Error updating dish in IndexedDB:', error);
+    return false;
+  }
+};
+
+/**
+ * Delete a dish by ID
+ * @param {string} id - Dish ID
+ * @returns {Promise<boolean>}
+ */
+export const deleteDish = async (id) => {
+  try {
+    await dbOperation(STORES.DISHES, 'readwrite', (transaction, store, resolve) => {
+      store.delete(id);
+      resolve(true);
+    });
+    return true;
+  } catch (error) {
+    console.error(`Error deleting dish ${id} from IndexedDB:`, error);
+    return false;
+  }
+};
+
+/**
+ * Get dishes filtered by subcategory ID
+ * @param {string} subcategoryId - Subcategory ID to filter by
+ * @returns {Promise<Array>}
+ */
+export const getDishesBySubcategory = async (subcategoryId) => {
+  try {
+    const dishes = await getDishes();
+    if (!subcategoryId) return dishes;
+    
+    return dishes.filter(dish => {
+      // Check if dish has the subcategory in its subCategory array
+      if (!dish.subCategory) return false;
+      
+      // Handle if subCategory is an array of objects or array of strings
+      return dish.subCategory.some(sc => {
+        return (typeof sc === 'object') ? sc._id === subcategoryId : sc === subcategoryId;
+      });
+    });
+  } catch (error) {
+    console.error('Error filtering dishes by subcategory:', error);
+    return [];
+  }
+};
+
+/**
+ * Search dishes by name or description
+ * @param {string} query - Search query
+ * @returns {Promise<Array>}
+ */
+export const searchDishes = async (query) => {
+  if (!query || query.trim() === '') {
+    return await getDishes();
+  }
+  
+  try {
+    const dishes = await getDishes();
+    const searchTerm = query.trim().toLowerCase();
+    
+    return dishes.filter(dish => 
+      dish.dishName.toLowerCase().includes(searchTerm) ||
+      (dish.description && dish.description.toLowerCase().includes(searchTerm))
+    );
+  } catch (error) {
+    console.error('Error searching dishes:', error);
+    return [];
+  }
+};
+
+/**
+ * Get last sync time for dishes
+ * @returns {Promise<string|null>}
+ */
+export const getDishLastSyncTime = async () => {
+  try {
+    return await dbOperation(STORES.META, 'readonly', (transaction, store, resolve) => {
+      const request = store.get('lastDishSync');
+      request.onsuccess = () => {
+        resolve(request.result ? request.result.value : null);
+      };
+    });
+  } catch (error) {
+    console.error('Error getting dish last sync time from IndexedDB:', error);
+    return null;
+  }
+};
+
+// Variant-related functions
+
+/**
+ * Save multiple variants to IndexedDB
+ * @param {Array} variants - Array of variant objects
+ * @returns {Promise<boolean>}
+ */
+export const saveVariants = async (variants) => {
+  try {
+    await dbOperation(STORES.VARIANTS, 'readwrite', (transaction, store, resolve) => {
+      // Clear existing variants
+      store.clear();
+      // Add all variants
+      variants.forEach(variant => {
+        store.add(variant);
+      });
+      // Save last sync time
+      const metaTransaction = transaction.db.transaction(STORES.META, 'readwrite');
+      const metaStore = metaTransaction.objectStore(STORES.META);
+      metaStore.put({ key: 'lastVariantSync', value: new Date().toISOString() });
+      resolve(true);
+    });
+    return true;
+  } catch (error) {
+    console.error('Error saving variants to IndexedDB:', error);
+    return false;
+  }
+};
+
+/**
+ * Get all variants from IndexedDB
+ * @returns {Promise<Array>}
+ */
+export const getVariants = async () => {
+  try {
+    return await dbOperation(STORES.VARIANTS, 'readonly', (transaction, store, resolve) => {
+      const request = store.getAll();
+      request.onsuccess = () => {
+        resolve(request.result);
+      };
+    });
+  } catch (error) {
+    console.error('Error getting variants from IndexedDB:', error);
+    return [];
+  }
+};
+
+/**
+ * Get variants for a specific dish
+ * @param {string} dishId - Dish ID
+ * @returns {Promise<Array>}
+ */
+export const getVariantsByDish = async (dishId) => {
+  try {
+    const variants = await getVariants();
+    return variants.filter(variant => 
+      variant.dishReference === dishId || 
+      (variant.dishReference && variant.dishReference._id === dishId)
+    );
+  } catch (error) {
+    console.error(`Error getting variants for dish ${dishId}:`, error);
+    return [];
+  }
+};
+
+/**
+ * Get a single variant by ID
+ * @param {string} id - Variant ID
+ * @returns {Promise<Object|null>}
+ */
+export const getVariantById = async (id) => {
+  try {
+    return await dbOperation(STORES.VARIANTS, 'readonly', (transaction, store, resolve) => {
+      const request = store.get(id);
+      request.onsuccess = () => {
+        resolve(request.result || null);
+      };
+    });
+  } catch (error) {
+    console.error(`Error getting variant ${id} from IndexedDB:`, error);
+    return null;
+  }
+};
+
+/**
+ * Update or add a single variant
+ * @param {Object} variant - Variant object with _id
+ * @returns {Promise<boolean>}
+ */
+export const updateVariant = async (variant) => {
+  try {
+    await dbOperation(STORES.VARIANTS, 'readwrite', (transaction, store, resolve) => {
+      store.put(variant);
+      resolve(true);
+    });
+    return true;
+  } catch (error) {
+    console.error('Error updating variant in IndexedDB:', error);
+    return false;
+  }
+};
+
+/**
+ * Delete a variant by ID
+ * @param {string} id - Variant ID
+ * @returns {Promise<boolean>}
+ */
+export const deleteVariant = async (id) => {
+  try {
+    await dbOperation(STORES.VARIANTS, 'readwrite', (transaction, store, resolve) => {
+      store.delete(id);
+      resolve(true);
+    });
+    return true;
+  } catch (error) {
+    console.error(`Error deleting variant ${id} from IndexedDB:`, error);
+    return false;
+  }
+};
+
+/**
+ * Get last sync time for variants
+ * @returns {Promise<string|null>}
+ */
+export const getVariantLastSyncTime = async () => {
+  try {
+    return await dbOperation(STORES.META, 'readonly', (transaction, store, resolve) => {
+      const request = store.get('lastVariantSync');
+      request.onsuccess = () => {
+        resolve(request.result ? request.result.value : null);
+      };
+    });
+  } catch (error) {
+    console.error('Error getting variant last sync time from IndexedDB:', error);
+    return null;
+  }
+};
+
+/**
+ * Detect conflicts between local and server dishes
+ * @param {Array} serverDishes - Dishes from the server
+ * @returns {Promise<Array>} - Array of potential conflicts
+ */
+export const detectDishConflicts = async (serverDishes) => {
+  try {
+    const localDishes = await getDishes();
+    const conflicts = [];
+    
+    // Create maps for faster lookups
+    const serverMap = serverDishes.reduce((map, dish) => {
+      map[dish._id] = dish;
+      return map;
+    }, {});
+    
+    // Check for updates to the same dish
+    for (const localDish of localDishes) {
+      // Skip temporary dishes
+      if (localDish.isTemp) continue;
+      
+      const serverDish = serverMap[localDish._id];
+      if (serverDish) {
+        // Compare updatedAt timestamps if available
+        const localUpdated = localDish.updatedAt ? new Date(localDish.updatedAt) : null;
+        const serverUpdated = serverDish.updatedAt ? new Date(serverDish.updatedAt) : null;
+        
+        // If both have valid timestamps and were updated after the last sync
+        if (localUpdated && serverUpdated) {
+          const lastSync = await getDishLastSyncTime();
+          const lastSyncDate = lastSync ? new Date(lastSync) : null;
+          
+          if (lastSyncDate && localUpdated > lastSyncDate && serverUpdated > lastSyncDate) {
+            // Potential conflict - both were updated since last sync
+            conflicts.push({
+              type: 'UPDATE_DISH',
+              id: localDish._id,
+              localData: localDish,
+              serverData: serverDish,
+              endpoint: '/api/menu/dishes'
+            });
+          }
+        }
+      }
+    }
+    
+    // Check for local temp dishes that might conflict with server ones
+    for (const localDish of localDishes) {
+      if (localDish.isTemp) {
+        // Look for server dishes with the same name
+        const matchingServerDish = serverDishes.find(
+          dish => dish.dishName.toLowerCase() === localDish.dishName.toLowerCase()
+        );
+        
+        if (matchingServerDish) {
+          conflicts.push({
+            type: 'CREATE_DISH',
+            tempId: localDish._id,
+            localData: localDish,
+            serverData: matchingServerDish,
+            endpoint: '/api/menu/dishes'
+          });
+        }
+      }
+    }
+    
+    return conflicts;
+  } catch (error) {
+    console.error('Error detecting dish conflicts:', error);
+    return [];
+  }
+};
+
+/**
+ * Detect conflicts between local and server variants
+ * @param {Array} serverVariants - Variants from the server
+ * @returns {Promise<Array>} - Array of potential conflicts
+ */
+export const detectVariantConflicts = async (serverVariants) => {
+  try {
+    const localVariants = await getVariants();
+    const conflicts = [];
+    
+    // Create maps for faster lookups
+    const serverMap = serverVariants.reduce((map, variant) => {
+      map[variant._id] = variant;
+      return map;
+    }, {});
+    
+    // Check for updates to the same variant
+    for (const localVariant of localVariants) {
+      // Skip temporary variants
+      if (localVariant.isTemp) continue;
+      
+      const serverVariant = serverMap[localVariant._id];
+      if (serverVariant) {
+        // Compare updatedAt timestamps
+        const localUpdated = localVariant.updatedAt ? new Date(localVariant.updatedAt) : null;
+        const serverUpdated = serverVariant.updatedAt ? new Date(serverVariant.updatedAt) : null;
+        
+        if (localUpdated && serverUpdated) {
+          const lastSync = await getVariantLastSyncTime();
+          const lastSyncDate = lastSync ? new Date(lastSync) : null;
+          
+          if (lastSyncDate && localUpdated > lastSyncDate && serverUpdated > lastSyncDate) {
+            conflicts.push({
+              type: 'UPDATE_VARIANT',
+              id: localVariant._id,
+              localData: localVariant,
+              serverData: serverVariant,
+              endpoint: '/api/menu/variants'
+            });
+          }
+        }
+      }
+    }
+    
+    // Check for local temp variants that might conflict with server ones
+    for (const localVariant of localVariants) {
+      if (localVariant.isTemp) {
+        const matchingServerVariant = serverVariants.find(
+          variant => variant.variantName.toLowerCase() === localVariant.variantName.toLowerCase() &&
+                     variant.dishReference === localVariant.dishReference
+        );
+        
+        if (matchingServerVariant) {
+          conflicts.push({
+            type: 'CREATE_VARIANT',
+            tempId: localVariant._id,
+            localData: localVariant,
+            serverData: matchingServerVariant,
+            endpoint: '/api/menu/variants'
+          });
+        }
+      }
+    }
+    
+    return conflicts;
+  } catch (error) {
+    console.error('Error detecting variant conflicts:', error);
     return [];
   }
 };

@@ -1,4 +1,3 @@
-// src/components/menu/CategoryList.js - Phase 2 version
 'use client';
 import { useState, useEffect } from 'react';
 import {

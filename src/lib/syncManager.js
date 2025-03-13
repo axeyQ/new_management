@@ -2,6 +2,7 @@ import axiosWithAuth from './axiosWithAuth';
 import * as idb from './indexedDBService';
 import toast from 'react-hot-toast';
 import { OPERATION_TYPES } from './enhancedAxiosWithAuth';
+import { showNotification } from './notificationService';
 
 // Maximum retry attempts for operations
 const MAX_RETRIES = 3;
@@ -12,11 +13,11 @@ const getBackoffDelay = (retryCount) => {
 };
 
 /**
- * Log sync errors for debugging
- * @param {string} message - Error message
- * @param {Object} error - Error object
- * @param {Object} operation - Operation that failed
- */
+* Log sync errors for debugging
+* @param {string} message - Error message
+* @param {Object} error - Error object
+* @param {Object} operation - Operation that failed
+*/
 const logSyncError = (message, error, operation) => {
   console.error(`Sync Error: ${message}`, {
     error,
@@ -40,10 +41,10 @@ const logSyncError = (message, error, operation) => {
 };
 
 /**
- * Checks if an operation can be retried
- * @param {Object} operation - The operation to check
- * @returns {boolean} - Whether the operation can be retried
- */
+* Checks if an operation can be retried
+* @param {Object} operation - The operation to check
+* @returns {boolean} - Whether the operation can be retried
+*/
 const canRetryOperation = (operation) => {
   // Don't retry if max retries reached
   if ((operation.retryCount || 0) >= MAX_RETRIES) {
@@ -62,19 +63,16 @@ const canRetryOperation = (operation) => {
 };
 
 /**
- * Process a specific type of conflict
- * @param {Object} operation - The operation with conflict
- * @param {Object} error - The error response
- * @returns {Promise<boolean>} - Whether the conflict was resolved
- */
+* Process a specific type of conflict
+* @param {Object} operation - The operation with conflict
+* @param {Object} error - The error response
+* @returns {Promise<boolean>} - Whether the conflict was resolved
+*/
 const resolveConflict = async (operation, error) => {
   // Implement specific conflict resolution strategies based on operation type
   
   // Category already exists conflict (409 status code)
-  if (
-    operation.type === OPERATION_TYPES.CREATE_CATEGORY && 
-    error.response?.status === 409
-  ) {
+  if (operation.type === OPERATION_TYPES.CREATE_CATEGORY && error.response?.status === 409) {
     try {
       // Find any temp category in IndexedDB
       const categories = await idb.getCategories();
@@ -91,10 +89,8 @@ const resolveConflict = async (operation, error) => {
         if (existingCategory) {
           // Delete the temp category from IndexedDB
           await idb.deleteCategory(operation.tempId);
-          
           // Clear the operation
           await idb.clearOperation(operation.id);
-          
           console.log('Resolved conflict: Category already exists');
           return true;
         }
@@ -104,16 +100,235 @@ const resolveConflict = async (operation, error) => {
     }
   }
   
-  // Add other conflict resolution strategies as needed
+  // Subcategory already exists conflict
+  if (operation.type === OPERATION_TYPES.CREATE_SUBCATEGORY && error.response?.status === 409) {
+    try {
+      // Find any temp subcategory in IndexedDB
+      const subcategories = await idb.getSubcategories();
+      const tempSubcategory = subcategories.find(sc => sc._id === operation.tempId);
+      
+      if (tempSubcategory) {
+        // Get the existing subcategory from server to compare
+        const existingRes = await axiosWithAuth.get('/api/menu/subcategories');
+        const existingSubcategories = existingRes.data.data || [];
+        const existingSubcategory = existingSubcategories.find(
+          sc => sc.subCategoryName.toLowerCase() === tempSubcategory.subCategoryName.toLowerCase()
+        );
+        
+        if (existingSubcategory) {
+          // Delete the temp subcategory from IndexedDB
+          await idb.deleteSubcategory(operation.tempId);
+          // Clear the operation
+          await idb.clearOperation(operation.id);
+          console.log('Resolved conflict: Subcategory already exists');
+          return true;
+        }
+      }
+    } catch (resolveError) {
+      console.error('Error resolving conflict:', resolveError);
+    }
+  }
+  
+  // Table already exists conflict
+  if (operation.type === OPERATION_TYPES.CREATE_TABLE && error.response?.status === 409) {
+    try {
+      // Find any temp table in IndexedDB
+      const tables = await idb.getTables();
+      const tempTable = tables.find(t => t._id === operation.tempId);
+      
+      if (tempTable) {
+        // Get the existing table from server to compare
+        const existingRes = await axiosWithAuth.get('/api/tables');
+        const existingTables = existingRes.data.data || [];
+        const existingTable = existingTables.find(
+          t => t.tableName.toLowerCase() === tempTable.tableName.toLowerCase()
+        );
+        
+        if (existingTable) {
+          // Delete the temp table from IndexedDB
+          await idb.deleteTable(operation.tempId);
+          // Clear the operation
+          await idb.clearOperation(operation.id);
+          console.log('Resolved conflict: Table already exists');
+          return true;
+        }
+      }
+    } catch (resolveError) {
+      console.error('Error resolving table conflict:', resolveError);
+    }
+  }
+  
+  // Table Type already exists conflict
+  if (operation.type === OPERATION_TYPES.CREATE_TABLE_TYPE && error.response?.status === 409) {
+    try {
+      // Find any temp table type in IndexedDB
+      const tableTypes = await idb.getTableTypes();
+      const tempTableType = tableTypes.find(t => t._id === operation.tempId);
+      
+      if (tempTableType) {
+        // Get the existing table type from server to compare
+        const existingRes = await axiosWithAuth.get('/api/tables/types');
+        const existingTableTypes = existingRes.data.data || [];
+        const existingTableType = existingTableTypes.find(
+          t => t.tableTypeName.toLowerCase() === tempTableType.tableTypeName.toLowerCase()
+        );
+        
+        if (existingTableType) {
+          // Delete the temp table type from IndexedDB
+          await idb.deleteTableType(operation.tempId);
+          // Clear the operation
+          await idb.clearOperation(operation.id);
+          console.log('Resolved conflict: Table type already exists');
+          return true;
+        }
+      }
+    } catch (resolveError) {
+      console.error('Error resolving table type conflict:', resolveError);
+    }
+  }
   
   return false;
 };
 
 /**
- * Processes a single pending operation with enhanced error handling
- * @param {Object} operation - The operation to process
- * @returns {Promise<{success: boolean, error: Object|null}>}
- */
+* Recover operation data when temp table is missing
+* This function helps when the temp table wasn't properly saved in IndexedDB
+* @param {Object} operation - The operation with missing temp data
+* @returns {Object|null} Recovered data or null if not possible
+*/
+const recoverMissingTempData = (operation) => {
+  try {
+    // If the operation has data, we can use it directly
+    if (operation.data && Object.keys(operation.data).length > 0) {
+      console.log('Recovering from operation.data:', operation.data);
+      
+      // Ensure data has required fields to create a table
+      const recoveredData = { ...operation.data };
+      
+      // Add any missing required fields with sensible defaults
+      if (!recoveredData.tableName) {
+        recoveredData.tableName = `Recovered Table ${new Date().toLocaleTimeString()}`;
+      }
+      
+      if (recoveredData.capacity === undefined) {
+        recoveredData.capacity = 1;
+      }
+      
+      if (recoveredData.status === undefined) {
+        recoveredData.status = true;
+      }
+      
+      return recoveredData;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error recovering temp data:', error);
+    return null;
+  }
+};
+
+/**
+* Recover operation data when temp table type is missing
+* This function helps when the temp table type wasn't properly saved in IndexedDB
+* @param {Object} operation - The operation with missing temp data
+* @returns {Object|null} Recovered data or null if not possible
+*/
+const recoverMissingTempTypeData = (operation) => {
+  try {
+    // If the operation has data, we can use it directly
+    if (operation.data && Object.keys(operation.data).length > 0) {
+      console.log('Recovering table type from operation.data:', operation.data);
+      
+      // Ensure data has required fields to create a table type
+      const recoveredData = { ...operation.data };
+      
+      // Add any missing required fields with sensible defaults
+      if (!recoveredData.tableTypeName) {
+        recoveredData.tableTypeName = `Recovered Type ${new Date().toLocaleTimeString()}`;
+      }
+      
+      if (recoveredData.tableTypeDescription === undefined) {
+        recoveredData.tableTypeDescription = '';
+      }
+      
+      return recoveredData;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error recovering table type temp data:', error);
+    return null;
+  }
+};
+
+/**
+* Recover operation data when temp category is missing
+* @param {Object} operation - The operation with missing temp data
+* @returns {Object|null} Recovered data or null if not possible
+*/
+const recoverMissingCategoryData = (operation) => {
+  try {
+    // If the operation has data, we can use it directly
+    if (operation.data && Object.keys(operation.data).length > 0) {
+      console.log('Recovering category from operation.data:', operation.data);
+      
+      // Ensure data has required fields to create a category
+      const recoveredData = { ...operation.data };
+      
+      // Add any missing required fields with sensible defaults
+      if (!recoveredData.categoryName) {
+        recoveredData.categoryName = `Recovered Category ${new Date().toLocaleTimeString()}`;
+      }
+      
+      if (!recoveredData.parentCategory) {
+        recoveredData.parentCategory = 'food';
+      }
+      
+      return recoveredData;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error recovering category temp data:', error);
+    return null;
+  }
+};
+
+/**
+* Recover operation data when temp subcategory is missing
+* @param {Object} operation - The operation with missing temp data
+* @returns {Object|null} Recovered data or null if not possible
+*/
+const recoverMissingSubcategoryData = (operation) => {
+  try {
+    // If the operation has data, we can use it directly
+    if (operation.data && Object.keys(operation.data).length > 0) {
+      console.log('Recovering subcategory from operation.data:', operation.data);
+      
+      // Ensure data has required fields to create a subcategory
+      const recoveredData = { ...operation.data };
+      
+      // Add any missing required fields with sensible defaults
+      if (!recoveredData.subCategoryName) {
+        recoveredData.subCategoryName = `Recovered Subcategory ${new Date().toLocaleTimeString()}`;
+      }
+      
+      return recoveredData;
+    }
+    
+    return null;
+  } catch (error) {
+    console.error('Error recovering subcategory temp data:', error);
+    return null;
+  }
+};
+
+/**
+* Processes a single pending operation with enhanced error handling
+* @param {Object} operation - The operation to process
+* @returns {Promise<{success: boolean, error: Object|null}>}
+*/
 export const processOperation = async (operation) => {
   try {
     console.log(`Processing operation: ${operation.type}`, operation);
@@ -126,19 +341,31 @@ export const processOperation = async (operation) => {
       
       if (tempCategory) {
         try {
+          // Prepare clean data for the API
+          const cleanData = { ...operation.data };
+          
+          // If operation data is empty, use the temp category data
+          if (Object.keys(cleanData).length === 0) {
+            Object.assign(cleanData, tempCategory);
+          }
+          
+          // Remove temp fields
+          delete cleanData._id;
+          delete cleanData.isTemp;
+          delete cleanData.__v;
+          
+          console.log('Sending cleaned category data to server:', cleanData);
+          
           // Create the real category
           const response = await axiosWithAuth({
             method: operation.method,
             url: operation.url,
-            data: {
-              ...operation.data,
-              // Don't include the temporary ID in the request
-              _id: undefined,
-              isTemp: undefined
-            }
+            data: cleanData
           });
           
           if (response.data.success) {
+            console.log('Category created successfully on server:', response.data.data);
+            
             // Replace the temp category with the real one
             await idb.deleteCategory(operation.tempId);
             await idb.updateCategory(response.data.data);
@@ -146,17 +373,27 @@ export const processOperation = async (operation) => {
             // Clear the operation
             await idb.clearOperation(operation.id);
             return { success: true, error: null };
+          } else {
+            throw new Error(response.data.message || 'Server returned error');
           }
         } catch (error) {
           // Try to resolve conflict if applicable
           const conflictResolved = await resolveConflict(operation, error);
-          
           if (conflictResolved) {
             return { success: true, error: null };
           }
           
           // Log the error for debugging
           logSyncError('Failed to create category', error, operation);
+          
+          // If we have a 400 error, add additional diagnostics
+          if (error.response?.status === 400) {
+            console.error('Validation error details:', {
+              dataWeTriedToSend: operation.data,
+              serverResponse: error.response.data,
+              tempCategoryData: tempCategory
+            });
+          }
           
           // If can retry, update operation with error info and increment retry count
           if (canRetryOperation(operation)) {
@@ -202,9 +439,549 @@ export const processOperation = async (operation) => {
           
           return { success: false, error, willRetry: false };
         }
+      } else {
+        // Temp category not found, try to recover from operation data
+        console.warn(`Temp category with ID ${operation.tempId} not found in IndexedDB`);
+        
+        // Try to recover data from the operation itself
+        const recoveredData = recoverMissingCategoryData(operation);
+        
+        if (recoveredData) {
+          console.log('Attempting to create category with recovered data:', recoveredData);
+          
+          try {
+            // Attempt to create with recovered data
+            const response = await axiosWithAuth({
+              method: operation.method,
+              url: operation.url,
+              data: recoveredData
+            });
+            
+            if (response.data.success) {
+              console.log('Successfully created category with recovered data:', response.data.data);
+              
+              // Update local categories
+              await idb.updateCategory(response.data.data);
+              
+              // Clear the operation
+              await idb.clearOperation(operation.id);
+              return { success: true, error: null, recovered: true };
+            } else {
+              throw new Error(response.data.message || 'Server returned error');
+            }
+          } catch (error) {
+            console.error('Failed to create category with recovered data:', error);
+            
+            // Clear the operation since recovery failed
+            await idb.clearOperation(operation.id);
+            return {
+              success: false,
+              error: new Error('Recovery failed: ' + error.message),
+              recoveryAttempted: true
+            };
+          }
+        } else {
+          // No data to recover, clean up the operation
+          await idb.clearOperation(operation.id);
+          return {
+            success: false,
+            error: new Error('Temporary category not found and no data to recover'),
+            cleanedUp: true
+          };
+        }
       }
     }
-    // Similar handling for other operation types
+    
+    // Handle subcategory creation
+    else if (operation.type === OPERATION_TYPES.CREATE_SUBCATEGORY && operation.tempId) {
+      // Find the temp subcategory in IndexedDB
+      const subcategories = await idb.getSubcategories();
+      const tempSubcategory = subcategories.find(sc => sc._id === operation.tempId);
+      
+      if (tempSubcategory) {
+        try {
+          // Prepare clean data for the API
+          const cleanData = { ...operation.data };
+          
+          // If operation data is empty, use the temp subcategory data
+          if (Object.keys(cleanData).length === 0) {
+            Object.assign(cleanData, tempSubcategory);
+          }
+          
+          // Remove temp fields
+          delete cleanData._id;
+          delete cleanData.isTemp;
+          delete cleanData.__v;
+          
+          // Ensure category is just an ID if it's stored as an object
+          if (cleanData.category && typeof cleanData.category === 'object' && cleanData.category._id) {
+            cleanData.category = cleanData.category._id;
+          }
+          
+          console.log('Sending cleaned subcategory data to server:', cleanData);
+          
+          // Create the real subcategory
+          const response = await axiosWithAuth({
+            method: operation.method,
+            url: operation.url,
+            data: cleanData
+          });
+          
+          if (response.data.success) {
+            console.log('Subcategory created successfully on server:', response.data.data);
+            
+            // Replace the temp subcategory with the real one
+            await idb.deleteSubcategory(operation.tempId);
+            await idb.updateSubcategory(response.data.data);
+            
+            // Clear the operation
+            await idb.clearOperation(operation.id);
+            return { success: true, error: null };
+          } else {
+            throw new Error(response.data.message || 'Server returned error');
+          }
+        } catch (error) {
+          // Try to resolve conflict if applicable
+          const conflictResolved = await resolveConflict(operation, error);
+          if (conflictResolved) {
+            return { success: true, error: null };
+          }
+          
+          // Log the error for debugging
+          logSyncError('Failed to create subcategory', error, operation);
+          
+          // If can retry, update operation with error info and increment retry count
+          if (canRetryOperation(operation)) {
+            const updatedOperation = {
+              ...operation,
+              retryCount: (operation.retryCount || 0) + 1,
+              lastAttempt: new Date().toISOString(),
+              lastError: {
+                message: error.message,
+                statusCode: error.response?.status,
+                data: error.response?.data
+              }
+            };
+            
+            // Update in DB and schedule retry with backoff
+            await idb.clearOperation(operation.id);
+            const newId = `${operation.id}_retry_${updatedOperation.retryCount}`;
+            await idb.queueOperation({...updatedOperation, id: newId});
+            
+            // Schedule retry with exponential backoff
+            const delay = getBackoffDelay(updatedOperation.retryCount);
+            setTimeout(() => {
+              console.log(`Retrying operation after ${delay}ms:`, newId);
+            }, delay);
+            
+            return { success: false, error, willRetry: true };
+          }
+          
+          // If max retries reached or non-retryable error, mark as failed
+          await idb.clearOperation(operation.id);
+          await idb.setMetadata('failedOperations', {
+            ...await idb.getMetadata('failedOperations') || {},
+            [operation.id]: {
+              operation,
+              error: {
+                message: error.message,
+                statusCode: error.response?.status,
+                data: error.response?.data
+              },
+              timestamp: new Date().toISOString()
+            }
+          });
+          
+          return { success: false, error, willRetry: false };
+        }
+      } else {
+        // Temp subcategory not found, try to recover from operation data
+        console.warn(`Temp subcategory with ID ${operation.tempId} not found in IndexedDB`);
+        
+        // Try to recover data from the operation itself
+        const recoveredData = recoverMissingSubcategoryData(operation);
+        
+        if (recoveredData) {
+          console.log('Attempting to create subcategory with recovered data:', recoveredData);
+          
+          try {
+            // Attempt to create with recovered data
+            const response = await axiosWithAuth({
+              method: operation.method,
+              url: operation.url,
+              data: recoveredData
+            });
+            
+            if (response.data.success) {
+              console.log('Successfully created subcategory with recovered data:', response.data.data);
+              
+              // Update local subcategories
+              await idb.updateSubcategory(response.data.data);
+              
+              // Clear the operation
+              await idb.clearOperation(operation.id);
+              return { success: true, error: null, recovered: true };
+            } else {
+              throw new Error(response.data.message || 'Server returned error');
+            }
+          } catch (error) {
+            console.error('Failed to create subcategory with recovered data:', error);
+            
+            // Clear the operation since recovery failed
+            await idb.clearOperation(operation.id);
+            return {
+              success: false,
+              error: new Error('Recovery failed: ' + error.message),
+              recoveryAttempted: true
+            };
+          }
+        } else {
+          // No data to recover, clean up the operation
+          await idb.clearOperation(operation.id);
+          return {
+            success: false,
+            error: new Error('Temporary subcategory not found and no data to recover'),
+            cleanedUp: true
+          };
+        }
+      }
+    }
+    
+   
+    // Add table creation handling
+    else if (operation.type === OPERATION_TYPES.CREATE_TABLE && operation.tempId) {
+      // Find the temp table in IndexedDB
+      const tables = await idb.getTables();
+      const tempTable = tables.find(t => t._id === operation.tempId);
+      
+      if (tempTable) {
+        try {
+          // Prepare clean data for the API
+          // Start with the original operation data
+          const cleanData = { ...operation.data };
+          
+          // If the operation data is empty, use the temp table data
+          if (Object.keys(cleanData).length === 0) {
+            Object.assign(cleanData, tempTable);
+          }
+          
+          // Ensure these problematic fields are removed
+          delete cleanData._id;
+          delete cleanData.isTemp;
+          delete cleanData.__v;
+          
+          // Make sure the tableType is a string ID, not an object
+          if (cleanData.tableType && typeof cleanData.tableType === 'object' && cleanData.tableType._id) {
+            cleanData.tableType = cleanData.tableType._id;
+          }
+          
+          console.log('Sending cleaned table data to server:', cleanData);
+          
+          // Create the real table
+          const response = await axiosWithAuth({
+            method: operation.method,
+            url: operation.url,
+            data: cleanData
+          });
+          
+          if (response.data.success) {
+            console.log('Table created successfully on server:', response.data.data);
+            
+            // Replace the temp table with the real one
+            await idb.deleteTable(operation.tempId);
+            await idb.updateTable(response.data.data);
+            
+            // Clear the operation
+            await idb.clearOperation(operation.id);
+            return { success: true, error: null };
+          } else {
+            throw new Error(response.data.message || 'Server returned error');
+          }
+        } catch (error) {
+          // Try to resolve conflict if applicable
+          const conflictResolved = await resolveConflict(operation, error);
+          
+          if (conflictResolved) {
+            return { success: true, error: null };
+          }
+          
+          // Log the error for debugging
+          logSyncError('Failed to create table', error, operation);
+          
+          // If we have a 400 error, it might be due to validation issues with the data
+          // Let's add some additional diagnostics
+          if (error.response?.status === 400) {
+            console.error('Validation error details:', {
+              dataWeTriedToSend: operation.data,
+              serverResponse: error.response.data,
+              tempTableData: tempTable
+            });
+          }
+          
+          // If can retry, update operation with error info and increment retry count
+          if (canRetryOperation(operation)) {
+            const updatedOperation = {
+              ...operation,
+              retryCount: (operation.retryCount || 0) + 1,
+              lastAttempt: new Date().toISOString(),
+              lastError: {
+                message: error.message,
+                statusCode: error.response?.status,
+                data: error.response?.data
+              }
+            };
+            
+            // Update in DB and schedule retry with backoff
+            await idb.clearOperation(operation.id);
+            const newId = `${operation.id}_retry_${updatedOperation.retryCount}`;
+            await idb.queueOperation({...updatedOperation, id: newId});
+            
+            // Schedule retry with exponential backoff
+            const delay = getBackoffDelay(updatedOperation.retryCount);
+            setTimeout(() => {
+              console.log(`Retrying operation after ${delay}ms:`, newId);
+            }, delay);
+            
+            return { success: false, error, willRetry: true };
+          }
+          
+          // If max retries reached or non-retryable error, mark as failed
+          await idb.clearOperation(operation.id);
+          await idb.setMetadata('failedOperations', {
+            ...await idb.getMetadata('failedOperations') || {},
+            [operation.id]: {
+              operation,
+              error: {
+                message: error.message,
+                statusCode: error.response?.status,
+                data: error.response?.data
+              },
+              timestamp: new Date().toISOString()
+            }
+          });
+          
+          return { success: false, error, willRetry: false };
+        }
+      } else {
+        // Temp table not found, but we can try to recover from operation data
+        console.warn(`Temp table with ID ${operation.tempId} not found in IndexedDB`);
+        
+        // Try to recover data from the operation itself
+        const recoveredData = recoverMissingTempData(operation);
+        
+        if (recoveredData) {
+          console.log('Attempting to create table with recovered data:', recoveredData);
+          
+          try {
+            // Attempt to create with recovered data
+            const response = await axiosWithAuth({
+              method: operation.method,
+              url: operation.url,
+              data: recoveredData
+            });
+            
+            if (response.data.success) {
+              console.log('Successfully created table with recovered data:', response.data.data);
+              
+              // Update local tables
+              await idb.updateTable(response.data.data);
+              
+              // Clear the operation
+              await idb.clearOperation(operation.id);
+              
+              return { success: true, error: null, recovered: true };
+            } else {
+              throw new Error(response.data.message || 'Server returned error');
+            }
+          } catch (error) {
+            console.error('Failed to create table with recovered data:', error);
+            
+            // Clear the operation since recovery failed
+            await idb.clearOperation(operation.id);
+            
+            return {
+              success: false,
+              error: new Error('Recovery failed: ' + error.message),
+              recoveryAttempted: true
+            };
+          }
+        } else {
+          // No data to recover, clean up the operation
+          await idb.clearOperation(operation.id);
+          
+          return {
+            success: false,
+            error: new Error('Temporary table not found and no data to recover'),
+            cleanedUp: true
+          };
+        }
+      }
+    }
+    // Add table type creation handling
+    else if (operation.type === OPERATION_TYPES.CREATE_TABLE_TYPE && operation.tempId) {
+      // Find the temp table type in IndexedDB
+      const tableTypes = await idb.getTableTypes();
+      const tempTableType = tableTypes.find(t => t._id === operation.tempId);
+      
+      if (tempTableType) {
+        try {
+          // Prepare clean data for the API - similar to table handling
+          // Start with the original operation data
+          const cleanData = { ...operation.data };
+          
+          // If the operation data is empty, use the temp table type data
+          if (Object.keys(cleanData).length === 0) {
+            Object.assign(cleanData, tempTableType);
+          }
+          
+          // Ensure these problematic fields are removed
+          delete cleanData._id;
+          delete cleanData.isTemp;
+          delete cleanData.__v;
+          
+          console.log('Sending cleaned table type data to server:', cleanData);
+          
+          // Create the real table type
+          const response = await axiosWithAuth({
+            method: operation.method,
+            url: operation.url,
+            data: cleanData
+          });
+          
+          if (response.data.success) {
+            console.log('Table type created successfully on server:', response.data.data);
+            
+            // Replace the temp table type with the real one
+            await idb.deleteTableType(operation.tempId);
+            await idb.updateTableType(response.data.data);
+            
+            // Clear the operation
+            await idb.clearOperation(operation.id);
+            return { success: true, error: null };
+          } else {
+            throw new Error(response.data.message || 'Server returned error');
+          }
+        } catch (error) {
+          // Try to resolve conflict if applicable
+          const conflictResolved = await resolveConflict(operation, error);
+          
+          if (conflictResolved) {
+            return { success: true, error: null };
+          }
+          
+          // Log the error for debugging
+          logSyncError('Failed to create table type', error, operation);
+          
+          // If we have a 400 error, it might be due to validation issues with the data
+          // Add detailed diagnostics (similar to table handling)
+          if (error.response?.status === 400) {
+            console.error('Validation error details:', {
+              dataWeTriedToSend: operation.data,
+              serverResponse: error.response.data,
+              tempTableTypeData: tempTableType
+            });
+          }
+          
+          // If can retry, update operation with error info and increment retry count
+          if (canRetryOperation(operation)) {
+            const updatedOperation = {
+              ...operation,
+              retryCount: (operation.retryCount || 0) + 1,
+              lastAttempt: new Date().toISOString(),
+              lastError: {
+                message: error.message,
+                statusCode: error.response?.status,
+                data: error.response?.data
+              }
+            };
+            
+            // Update in DB and schedule retry with backoff
+            await idb.clearOperation(operation.id);
+            const newId = `${operation.id}_retry_${updatedOperation.retryCount}`;
+            await idb.queueOperation({...updatedOperation, id: newId});
+            
+            // Schedule retry with exponential backoff
+            const delay = getBackoffDelay(updatedOperation.retryCount);
+            setTimeout(() => {
+              console.log(`Retrying operation after ${delay}ms:`, newId);
+            }, delay);
+            
+            return { success: false, error, willRetry: true };
+          }
+          
+          // If max retries reached or non-retryable error, mark as failed
+          await idb.clearOperation(operation.id);
+          await idb.setMetadata('failedOperations', {
+            ...await idb.getMetadata('failedOperations') || {},
+            [operation.id]: {
+              operation,
+              error: {
+                message: error.message,
+                statusCode: error.response?.status,
+                data: error.response?.data
+              },
+              timestamp: new Date().toISOString()
+            }
+          });
+          
+          return { success: false, error, willRetry: false };
+        }
+      } else {
+        // Temp table type not found, but we can try to recover from operation data
+        console.warn(`Temp table type with ID ${operation.tempId} not found in IndexedDB`);
+        
+        // Try to recover data from the operation itself
+        const recoveredData = recoverMissingTempTypeData(operation);
+        
+        if (recoveredData) {
+          console.log('Attempting to create table type with recovered data:', recoveredData);
+          
+          try {
+            // Attempt to create with recovered data
+            const response = await axiosWithAuth({
+              method: operation.method,
+              url: operation.url,
+              data: recoveredData
+            });
+            
+            if (response.data.success) {
+              console.log('Successfully created table type with recovered data:', response.data.data);
+              
+              // Update local table types
+              await idb.updateTableType(response.data.data);
+              
+              // Clear the operation
+              await idb.clearOperation(operation.id);
+              
+              return { success: true, error: null, recovered: true };
+            } else {
+              throw new Error(response.data.message || 'Server returned error');
+            }
+          } catch (error) {
+            console.error('Failed to create table type with recovered data:', error);
+            
+            // Clear the operation since recovery failed
+            await idb.clearOperation(operation.id);
+            
+            return {
+              success: false,
+              error: new Error('Recovery failed: ' + error.message),
+              recoveryAttempted: true
+            };
+          }
+        } else {
+          // No data to recover, clean up the operation
+          await idb.clearOperation(operation.id);
+          
+          return {
+            success: false,
+            error: new Error('Temporary table type not found and no data to recover'),
+            cleanedUp: true
+          };
+        }
+      }
+    }
+    // Handle all other operation types
     else {
       try {
         // Recreate the request
@@ -290,9 +1067,9 @@ export const processOperation = async (operation) => {
 };
 
 /**
- * Processes pending operations when coming back online with better error handling
- * @returns {Promise<{success: boolean, processed: number, failed: number, retrying: number}>}
- */
+* Processes pending operations when coming back online with better error handling
+* @returns {Promise<{success: boolean, processed: number, failed: number, retrying: number}>}
+*/
 export const processPendingOperations = async () => {
   try {
     const pendingOperations = await idb.getPendingOperations();
@@ -377,10 +1154,10 @@ export const processPendingOperations = async () => {
       });
     }
     
-    return { 
-      success: failed === 0, 
-      processed, 
-      failed, 
+    return {
+      success: failed === 0,
+      processed,
+      failed,
       retrying,
       failedOperations: failedOperationDetails
     };
@@ -392,10 +1169,10 @@ export const processPendingOperations = async () => {
       errorMessage: error.message
     });
     
-    return { 
-      success: false, 
-      processed: 0, 
-      failed: 0, 
+    return {
+      success: false,
+      processed: 0,
+      failed: 0,
       retrying: 0,
       error: error.message
     };
@@ -403,9 +1180,9 @@ export const processPendingOperations = async () => {
 };
 
 /**
- * Syncs all data from the server
- * @returns {Promise<{success: boolean, categories: number, subcategories: number}>}
- */
+* Syncs all data from the server
+* @returns {Promise<{success: boolean, categories: number, subcategories: number}>}
+*/
 export const syncAllData = async () => {
   try {
     // Sync categories
@@ -420,10 +1197,24 @@ export const syncAllData = async () => {
       await idb.saveSubcategories(subcategoriesResponse.data.data);
     }
     
+    // Sync tables
+    const tablesResponse = await axiosWithAuth.get('/api/tables');
+    if (tablesResponse.data.success) {
+      await idb.saveTables(tablesResponse.data.data);
+    }
+    
+    // Sync table types
+    const tableTypesResponse = await axiosWithAuth.get('/api/tables/types');
+    if (tableTypesResponse.data.success) {
+      await idb.saveTableTypes(tableTypesResponse.data.data);
+    }
+    
     return {
       success: true,
       categories: categoriesResponse.data.data.length,
-      subcategories: subcategoriesResponse.data.data.length
+      subcategories: subcategoriesResponse.data.data.length,
+      tables: tablesResponse.data.data.length,
+      tableTypes: tableTypesResponse.data.data.length
     };
   } catch (error) {
     console.error('Error syncing data:', error);
@@ -439,9 +1230,9 @@ export const syncAllData = async () => {
 };
 
 /**
- * Manually retry failed operations
- * @returns {Promise<{success: boolean, retriedCount: number}>}
- */
+* Manually retry failed operations
+* @returns {Promise<{success: boolean, retriedCount: number}>}
+*/
 export const retryFailedOperations = async () => {
   try {
     const failedOps = await idb.getMetadata('failedOperations') || {};
@@ -455,6 +1246,7 @@ export const retryFailedOperations = async () => {
     
     for (const id of failedOpIds) {
       const failedOp = failedOps[id].operation;
+      
       if (failedOp) {
         // Reset retry count and requeue
         const retriedOp = {
@@ -481,9 +1273,9 @@ export const retryFailedOperations = async () => {
 };
 
 /**
- * Initializes synchronization process with enhanced error handling
- * @returns {Promise<{success: boolean, processed: number, failed: number, retrying: number}>}
- */
+* Initializes synchronization process with enhanced error handling
+* @returns {Promise<{success: boolean, processed: number, failed: number, retrying: number}>}
+*/
 export const initializeSync = async () => {
   try {
     await idb.setMetadata('syncStatus', 'in-progress');
@@ -502,7 +1294,6 @@ export const initializeSync = async () => {
     
     if (result.failed > 0) {
       toast.error(`Failed to synchronize ${result.failed} operation(s)`);
-      
       // If there were failures, provide more details
       console.error('Failed operations:', result.failedOperations);
     }
@@ -516,20 +1307,34 @@ export const initializeSync = async () => {
       // Store sync information
       await idb.setMetadata('lastFullSync', new Date().toISOString());
       await idb.setMetadata('syncStatus', 'complete');
+      
+      // Show notification for successful sync
+      showNotification('Sync Complete', {
+        body: `Synchronized ${result.processed} operations and refreshed data`
+      });
     } else {
       toast.error('Failed to synchronize data from server');
       await idb.setMetadata('syncStatus', 'failed');
+      
+      // Show notification for failed sync
+      showNotification('Sync Failed', {
+        body: 'Some operations could not be synchronized',
+        requireInteraction: true
+      });
     }
     
-    return { 
-      ...result, 
-      dataSync: syncResult.success, 
+    return {
+      ...result,
+      dataSync: syncResult.success,
       categories: syncResult.success ? syncResult.categories : 0,
-      subcategories: syncResult.success ? syncResult.subcategories : 0
+      subcategories: syncResult.success ? syncResult.subcategories : 0,
+      tables: syncResult.success ? syncResult.tables : 0,
+      tableTypes: syncResult.success ? syncResult.tableTypes : 0
     };
   } catch (error) {
     console.error('Sync initialization failed:', error);
     toast.error('Synchronization failed');
+    
     await idb.setMetadata('syncStatus', 'failed');
     await idb.setMetadata('lastSyncError', {
       message: 'Sync initialization failed',
@@ -537,10 +1342,10 @@ export const initializeSync = async () => {
       errorMessage: error.message
     });
     
-    return { 
-      success: false, 
-      processed: 0, 
-      failed: 0, 
+    return {
+      success: false,
+      processed: 0,
+      failed: 0,
       retrying: 0,
       error: error.message
     };
@@ -548,8 +1353,8 @@ export const initializeSync = async () => {
 };
 
 /**
- * Sets up automatic sync on reconnect
- */
+* Sets up automatic sync on reconnect
+*/
 export const setupAutoSync = () => {
   let lastOnlineStatus = navigator.onLine;
   
@@ -573,6 +1378,7 @@ export const setupAutoSync = () => {
         }
       }, 1500);
     }
+    
     lastOnlineStatus = true;
   });
   
@@ -611,4 +1417,17 @@ export const setupAutoSync = () => {
       }
     });
   }
+};
+
+// Initialize auto-sync
+setupAutoSync();
+
+// Export the main functions
+export default {
+  processOperation,
+  processPendingOperations,
+  syncAllData,
+  retryFailedOperations,
+  initializeSync,
+  setupAutoSync
 };

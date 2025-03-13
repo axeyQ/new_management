@@ -7,15 +7,22 @@ const urlsToCache = [
   '/dashboard',
   '/dashboard/menu/categories',
   '/dashboard/menu/subcategories',
-  // Add CSS, JS and other static assets
+  '/dashboard/menu/tables',
+  '/dashboard/tables',
+  '/dashboard/tables/layout',
+  '/dashboard/menu/dishes',
   '/globals.css',
   '/offline.html'
-  // Add icons, fonts, etc.
 ];
 
 const apiUrlsToCache = [
   '/api/menu/categories',
-  '/api/menu/subcategories'
+  '/api/menu/subcategories',
+  '/api/tables',
+  '/api/tables/types',
+  // Add new URLs to cache
+  '/api/menu/dishes',
+  '/api/menu/variants'
 ];
 
 self.addEventListener('install', (event) => {
@@ -59,7 +66,12 @@ self.addEventListener('fetch', (event) => {
               if (
                 event.request.method === 'GET' &&
                 (event.request.url.includes('/api/menu/categories') ||
-                 event.request.url.includes('/api/menu/subcategories'))
+                event.request.url.includes('/api/menu/subcategories') ||
+                event.request.url.includes('/api/tables') || 
+                event.request.url.includes('/api/tables/types') ||
+                // Add caching for dishes and variants
+                event.request.url.includes('/api/menu/dishes') ||
+                event.request.url.includes('/api/menu/variants'))
               ) {
                 cache.put(event.request, responseToCache);
               }

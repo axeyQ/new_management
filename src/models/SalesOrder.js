@@ -1,4 +1,3 @@
-// src/models/SalesOrder.js
 import mongoose from 'mongoose';
 
 const SalesOrderSchema = new mongoose.Schema({
@@ -17,8 +16,7 @@ const SalesOrderSchema = new mongoose.Schema({
   },
   orderMode: {
     type: String,
-    enum: ['Dine-in', 'Takeaway', 'Delivery', 'Direct Order-TableQR',
-      'Direct Order-Takeaway', 'Direct Order-Delivery', 'Zomato'],
+    enum: ['Dine-in', 'Takeaway', 'Delivery', 'Direct Order-TableQR', 'Direct Order-Takeaway', 'Direct Order-Delivery', 'Zomato'],
     required: true
   },
   numOfPeople: {
@@ -41,6 +39,11 @@ const SalesOrderSchema = new mongoose.Schema({
     }
   },
   itemsSold: [{
+    // IMPORTANT: Remove _id field schema definition to let MongoDB auto-generate it
+    // Instead, store client ID in a separate field that won't conflict with MongoDB
+    clientId: {
+      type: String
+    },
     dish: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Dish'
@@ -148,15 +151,13 @@ const SalesOrderSchema = new mongoose.Schema({
   },
   deliveryStatus: {
     type: String,
-    enum: ['pending', 'processing', 'out-for-delivery', 'delivered',
-      'cancelled'],
+    enum: ['pending', 'processing', 'out-for-delivery', 'delivered', 'cancelled'],
     default: 'pending'
   },
   table: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Table'
   },
-  // Updated with Zomato-specific status values
   orderStatus: {
     type: String,
     enum: ['pending', 'preparing', 'ready', 'out-for-delivery', 'scheduled', 'served', 'completed', 'cancelled'],
@@ -182,7 +183,6 @@ const SalesOrderSchema = new mongoose.Schema({
     type: Number,
     default: 0
   },
-  
   // Zomato-specific tracking information
   zomatoOrderDetails: {
     zomatoOrderId: {
@@ -208,8 +208,7 @@ const SalesOrderSchema = new mongoose.Schema({
     timeline: [{
       status: {
         type: String,
-        enum: ['placed', 'accepted', 'preparing', 'ready', 'delivery-partner-assigned', 
-               'delivery-partner-arrived', 'out-for-delivery', 'delivered', 'cancelled']
+        enum: ['placed', 'accepted', 'preparing', 'ready', 'delivery-partner-assigned', 'delivery-partner-arrived', 'out-for-delivery', 'delivered', 'cancelled']
       },
       timestamp: {
         type: Date,
@@ -220,7 +219,6 @@ const SalesOrderSchema = new mongoose.Schema({
       }
     }]
   },
-  
   createdAt: {
     type: Date,
     default: Date.now
@@ -228,6 +226,11 @@ const SalesOrderSchema = new mongoose.Schema({
   updatedAt: {
     type: Date,
     default: Date.now
+  },
+  // Flag to track sync status with external systems
+  isSynced: {
+    type: Boolean,
+    default: false
   }
 });
 
@@ -238,6 +241,7 @@ SalesOrderSchema.pre('save', async function(next) {
     const year = date.getFullYear().toString().substr(-2);
     const month = (date.getMonth() + 1).toString().padStart(2, '0');
     const day = date.getDate().toString().padStart(2, '0');
+    
     // Get count of orders today for sequence number
     const today = new Date(date.setHours(0, 0, 0, 0));
     const tomorrow = new Date(date);
@@ -246,8 +250,10 @@ SalesOrderSchema.pre('save', async function(next) {
       createdAt: { $gte: today, $lt: tomorrow }
     });
     const sequence = (count + 1).toString().padStart(4, '0');
+    
     // Format: INV-YYMMDD-XXXX
     this.invoiceNumber = `INV-${year}${month}${day}-${sequence}`;
+    
     // Generate reference number
     this.refNum = `REF-${year}${month}${day}-${sequence}`;
   }
@@ -263,7 +269,6 @@ SalesOrderSchema.pre('save', async function(next) {
       }]
     };
   }
-  
   next();
 });
 

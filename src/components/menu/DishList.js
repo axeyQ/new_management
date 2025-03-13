@@ -33,6 +33,7 @@ import {
   CircularProgress,
   Alert,
   Tooltip,
+  Badge,
   FormControlLabel,
   Switch,
 } from '@mui/material';
@@ -47,12 +48,22 @@ import {
   ExpandMore,
   ExpandLess,
   Visibility as VisibilityIcon,
+  CloudOff as OfflineIcon,
+  Sync as SyncIcon,
+  History as HistoryIcon
 } from '@mui/icons-material';
 import { useRouter } from 'next/navigation';
-import axiosWithAuth from '@/lib/axiosWithAuth';
+// Replace axiosWithAuth with enhancedAxiosWithAuth
+import enhancedAxiosWithAuth from '@/lib/enhancedAxiosWithAuth';
+import * as idb from '@/lib/indexedDBService';
 import toast from 'react-hot-toast';
 import DishForm from './DishForm';
 import InlineStockToggle from './InlineStockToggle';
+import { useNetwork } from '@/context/NetworkContext';
+import { initializeSync } from '@/lib/syncManager';
+import { syncStatus } from '@/lib/syncTracker';
+import { showNotification } from '@/lib/notificationService';
+import AdvancedConflictModal from '@/components/menu/AdvancedConflictModal';
 
 // ExpandableVariantsRow Component
 const ExpandableVariantsRow = ({ dishId, isExpanded, onVariantAction }) => {
@@ -67,15 +78,19 @@ const ExpandableVariantsRow = ({ dishId, isExpanded, onVariantAction }) => {
     description: '',
     isAvailable: true
   });
-
+  const { isOnline } = useNetwork();
   useEffect(() => {
     const fetchVariants = async () => {
       if (!isExpanded) return; // Only fetch when expanded
       setLoading(true);
       try {
-        const response = await axiosWithAuth.get(`/api/menu/dishes/${dishId}/variants`);
+        const response = await enhancedAxiosWithAuth.get(`/api/menu/dishes/${dishId}/variants`);
         if (response.data.success) {
           setVariants(response.data.data);
+          // Check if this is offline data
+          if (response.data.isOfflineData) {
+            console.log('Displaying cached variant data');
+          }
         } else {
           setError(response.data.message || 'Failed to load variants');
         }
@@ -92,7 +107,7 @@ const ExpandableVariantsRow = ({ dishId, isExpanded, onVariantAction }) => {
   // Handler to refetch variants after an action
   const refetchVariants = async () => {
     try {
-      const response = await axiosWithAuth.get(`/api/menu/dishes/${dishId}/variants`);
+      const response = await enhancedAxiosWithAuth.get(`/api/menu/dishes/${dishId}/variants`);
       if (response.data.success) {
         setVariants(response.data.data);
       }
@@ -125,9 +140,13 @@ const ExpandableVariantsRow = ({ dishId, isExpanded, onVariantAction }) => {
 
   const handleDeleteConfirm = async () => {
     try {
-      const response = await axiosWithAuth.delete(`/api/menu/variants/${selectedVariant._id}`);
+      const response = await enhancedAxiosWithAuth.delete(`/api/menu/variants/${selectedVariant._id}`);
       if (response.data.success) {
-        toast.success('Variant deleted successfully');
+        if (response.data.isOfflineOperation) {
+          toast.success('Variant will be deleted when you are back online');
+        } else {
+          toast.success('Variant deleted successfully');
+        }
         if (onVariantAction) {
           onVariantAction('delete', selectedVariant);
         }
@@ -148,12 +167,16 @@ const ExpandableVariantsRow = ({ dishId, isExpanded, onVariantAction }) => {
       return;
     }
     try {
-      const response = await axiosWithAuth.put(`/api/menu/variants/${selectedVariant._id}`, {
+      const response = await enhancedAxiosWithAuth.put(`/api/menu/variants/${selectedVariant._id}`, {
         ...editVariantData,
         dishReference: dishId
       });
       if (response.data.success) {
-        toast.success('Variant updated successfully');
+        if (response.data.isOfflineOperation) {
+          toast.success('Variant will be updated when you are back online');
+        } else {
+          toast.success('Variant updated successfully');
+        }
         if (onVariantAction) {
           onVariantAction('edit', response.data.data);
         }
@@ -390,15 +413,69 @@ const DishList = () => {
   const [viewMode, setViewMode] = useState('list');
   const [expandedDish, setExpandedDish] = useState(null);
   const [filteredDishes, setFilteredDishes] = useState([]);
+  const [isOfflineData, setIsOfflineData] = useState(false);
+  const [lastSyncTime, setLastSyncTime] = useState(null);
+  const [pendingOperations, setPendingOperations] = useState(0);
+  const [syncProgress, setSyncProgress] = useState(null);
+  const [detectedConflicts, setDetectedConflicts] = useState([]);
+  const [openAdvancedConflictModal, setOpenAdvancedConflictModal] = useState(false);
+
+  const { isOnline } = useNetwork();
+  useEffect(() => {
+    const subscription = syncStatus.subscribe(status => {
+      setSyncProgress(status);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   useEffect(() => {
     fetchSubCategories();
     fetchDishes();
-  }, []);
+    fetchPendingOperationsCount();
+    
+    // Set up an interval to refresh data
+    const intervalId = setInterval(() => {
+      if (isOnline) { // Only auto-refresh if online
+        fetchDishes(false); // silent refresh (no loading indicator)
+      }
+      // Always refresh pending operations count
+      fetchPendingOperationsCount();
+    }, 30000); // refresh every 30 seconds
+    
+    return () => clearInterval(intervalId);
+  }, [isOnline]);
+
+  useEffect(() => {
+    if (isOnline && isOfflineData) {
+      fetchDishes();
+    }
+  }, [isOnline]);
 
   useEffect(() => {
     fetchDishes();
   }, [selectedSubCategory]);
+
+  const fetchPendingOperationsCount = async () => {
+    try {
+      const operations = await idb.getPendingOperations();
+      const dishOps = operations.filter(op =>
+        op.type?.includes('DISH') || 
+        op.type?.includes('VARIANT') ||
+        op.url?.includes('/dishes') ||
+        op.url?.includes('/variants')
+      );
+      setPendingOperations(dishOps.length);
+    } catch (error) {
+      console.error('Error fetching pending operations:', error);
+    }
+  };
+
+  // Format date for display
+  const formatLastSync = (dateString) => {
+    if (!dateString) return 'Never';
+    const date = new Date(dateString);
+    return date.toLocaleString();
+  };
 
   const handleExpandDish = (dishId) => {
     setExpandedDish(expandedDish === dishId ? null : dishId);
@@ -436,9 +513,13 @@ const DishList = () => {
 
   const fetchSubCategories = async () => {
     try {
-      const res = await axiosWithAuth.get('/api/menu/subcategories');
+      const res = await enhancedAxiosWithAuth.get('/api/menu/subcategories');
       if (res.data.success) {
         setSubCategories(res.data.data);
+        // Check if this is offline data
+        if (res.data.isOfflineData) {
+          console.log('Displaying cached subcategory data');
+        }
       } else {
         toast.error('Failed to load subcategories');
       }
@@ -448,16 +529,24 @@ const DishList = () => {
     }
   };
 
-  const fetchDishes = async () => {
-    setLoading(true);
+  const fetchDishes = async (showLoading = true) => {
+    if (showLoading) setLoading(true);
     try {
       const url = selectedSubCategory
         ? `/api/menu/dishes?subcategory=${selectedSubCategory}`
         : '/api/menu/dishes';
-      const res = await axiosWithAuth.get(url);
+      const res = await enhancedAxiosWithAuth.get(url);
       if (res.data.success) {
         setDishes(res.data.data);
         setFilteredDishes(res.data.data);
+        
+        // Set offline data flag and last sync time if this is cached data
+        if (res.data.isOfflineData) {
+          setIsOfflineData(true);
+          setLastSyncTime(res.data.lastSyncTime);
+        } else {
+          setIsOfflineData(false);
+        }
       } else {
         toast.error(res.data.message || 'Failed to fetch dishes');
       }
@@ -465,10 +554,80 @@ const DishList = () => {
       console.error('Error fetching dishes:', error);
       toast.error('Error loading dishes');
     } finally {
+      if (showLoading) setLoading(false);
+    }
+  };
+  const handleForceSync = async () => {
+    if (!isOnline) {
+      toast.error('Cannot sync while offline');
+      return;
+    }
+    
+    toast.loading('Syncing data with server...');
+    setLoading(true);
+    
+    try {
+      // First check for potential conflicts
+      const serverDishesRes = await enhancedAxiosWithAuth.get('/api/menu/dishes');
+      
+      if (serverDishesRes.data.success) {
+        // Use the conflict detection from indexedDBService
+        const conflicts = await idb.detectDishConflicts(serverDishesRes.data.data);
+        
+        // Also check for variant conflicts
+        const serverVariantsRes = await enhancedAxiosWithAuth.get('/api/menu/variants');
+        let variantConflicts = [];
+        
+        if (serverVariantsRes.data.success) {
+          variantConflicts = await idb.detectVariantConflicts(serverVariantsRes.data.data);
+        }
+        
+        // Combine dish and variant conflicts
+        const allConflicts = [
+          ...conflicts.map(c => ({...c, itemName: c.localData.dishName || 'Unknown Dish'})),
+          ...variantConflicts.map(c => ({...c, itemName: c.localData.variantName || 'Unknown Variant'}))
+        ];
+        
+        if (allConflicts.length > 0) {
+          setDetectedConflicts(allConflicts);
+          setOpenAdvancedConflictModal(true);
+          toast.dismiss();
+          setLoading(false);
+          return;
+        }
+      }
+      
+      // Continue with regular sync if no conflicts
+      const result = await initializeSync();
+      
+      // Refresh data
+      await fetchSubCategories();
+      await fetchDishes(false);
+      await fetchPendingOperationsCount();
+      
+      toast.dismiss();
+      
+      // Show notification for sync result
+      if (result.success) {
+        toast.success('Sync completed successfully');
+        showNotification('Sync Complete', {
+          body: 'Dishes and variants synchronized successfully'
+        });
+      } else if (result.failed > 0) {
+        toast.error(`Failed to sync ${result.failed} operations`);
+        showNotification('Sync Issues', {
+          body: `${result.failed} operations failed to sync`,
+          requireInteraction: true
+        });
+      }
+    } catch (error) {
+      console.error('Error during sync:', error);
+      toast.dismiss();
+      toast.error('Sync failed. Please try again.');
+    } finally {
       setLoading(false);
     }
   };
-
   const handleOpenForm = (dish = null) => {
     setSelectedDish(dish);
     setOpenForm(true);
@@ -496,7 +655,7 @@ const DishList = () => {
 
   const handleDeleteConfirm = async () => {
     try {
-      const res = await axiosWithAuth.delete(`/api/menu/dishes/${dishToDelete._id}`);
+      const res = await enhancedAxiosWithAuth.delete(`/api/menu/dishes/${dishToDelete._id}`);
       if (res.data.success) {
         toast.success('Dish deleted successfully');
         fetchDishes();
@@ -549,14 +708,42 @@ const DishList = () => {
     <Box>
       <Box display="flex" justifyContent="space-between" alignItems="center" mb={3}>
         <Typography variant="h5">Dishes</Typography>
-        <Button
-          variant="contained"
-          color="primary"
-          startIcon={<AddIcon />}
-          onClick={() => handleOpenForm()}
-        >
-          Add Dish
-        </Button>
+        <Box display="flex" alignItems="center" gap={2}>
+          {syncProgress?.inProgress && (
+            <Box sx={{ display: 'flex', alignItems: 'center', ml: 2 }}>
+              <CircularProgress size={16} sx={{ mr: 1 }} />
+              <Typography variant="body2">
+                {Math.round(syncProgress.progress)}%
+              </Typography>
+            </Box>
+          )}
+          
+          {pendingOperations > 0 && (
+            <Tooltip title={`${pendingOperations} operation(s) pending sync`}>
+              <Badge badgeContent={pendingOperations} color="warning">
+                <Button
+                  startIcon={<SyncIcon />}
+                  variant="outlined"
+                  color="warning"
+                  onClick={handleForceSync}
+                  disabled={!isOnline || loading}
+                  size="small"
+                >
+                  Sync Now
+                </Button>
+              </Badge>
+            </Tooltip>
+          )}
+          
+          <Button
+            variant="contained"
+            color="primary"
+            startIcon={<AddIcon />}
+            onClick={() => handleOpenForm()}
+          >
+            Add Dish
+          </Button>
+        </Box>
       </Box>
 
       <Box mb={3}>
@@ -611,7 +798,29 @@ const DishList = () => {
           </Grid>
         </Grid>
       </Box>
-
+      {isOfflineData && (
+        <Alert
+          severity="info"
+          icon={<OfflineIcon />}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              startIcon={<SyncIcon />}
+              onClick={handleForceSync}
+              disabled={!isOnline || loading}
+            >
+              Sync
+            </Button>
+          }
+          sx={{ mb: 2 }}
+        >
+          {isOnline
+            ? `You're viewing cached data from ${formatLastSync(lastSyncTime)}`
+            : "You're offline. Changes will be saved locally and synced when you're back online."
+          }
+        </Alert>
+      )}
       {loading ? (
         <Box display="flex" justifyContent="center" p={4}>
           <CircularProgress />
@@ -963,6 +1172,19 @@ const DishList = () => {
           </Button>
         </DialogActions>
       </Dialog>
+      <AdvancedConflictModal
+        open={openAdvancedConflictModal}
+        onClose={() => setOpenAdvancedConflictModal(false)}
+        conflicts={detectedConflicts}
+        onResolved={(resolvedItems) => {
+          setOpenAdvancedConflictModal(false);
+          fetchDishes();
+          // Show notification
+          showNotification('Conflicts Resolved', {
+            body: `Successfully resolved ${resolvedItems.length} conflicts`
+          });
+        }}
+      />
     </Box>
   );
 };

@@ -806,8 +806,8 @@ const OrderForm = ({ orderId, onSuccess, onCancel, menuId }) => {
     e.preventDefault();
     
     // Validate form
-    if (!orderData.customer.name || !orderData.customer.phone) {
-      toast.error('Customer name and phone are required');
+    if (orderData.orderMode !== 'Dine-in' && (!orderData.customer.name || !orderData.customer.phone)) {
+      toast.error('Customer name and phone are required for non-dine-in orders');
       return;
     }
     
