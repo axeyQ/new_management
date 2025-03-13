@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import SalesRegister from '@/components/salesregister/SalesRegister';
 import {
@@ -16,7 +16,8 @@ import axiosWithAuth from '@/lib/axiosWithAuth';
 import { useAuth } from '@/context/AuthContext';
 import toast from 'react-hot-toast';
 
-export default function SalesRegisterPage() {
+// Create a client component that uses search params
+function SalesRegisterContent() {
   const { isAuthenticated, loading: authLoading } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -708,8 +709,20 @@ export default function SalesRegisterPage() {
           </Button>
         </DialogActions>
       </Dialog>
-
-
     </Box>
+  );
+}
+
+// Main page component that wraps the content in a Suspense boundary
+export default function SalesRegisterPage() {
+  return (
+    <Suspense fallback={
+      <Box display="flex" justifyContent="center" alignItems="center" height="100vh">
+        <CircularProgress />
+        <Typography variant="body1" sx={{ ml: 2 }}>Loading Sales Register...</Typography>
+      </Box>
+    }>
+      <SalesRegisterContent />
+    </Suspense>
   );
 }
