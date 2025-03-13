@@ -337,6 +337,56 @@ const SalesRegister = ({
   initialMode = 'Dine-in',
   onOrderUpdate = null
 }) => {
+
+  const checkAllItemsHaveKOT = () => {
+    // If there are no items, return true (nothing to check)
+    if (!currentOrder.itemsSold || currentOrder.itemsSold.length === 0) {
+      return true;
+    }
+    
+    // Check if any items don't have KOTs
+    const unsentItems = getUnsentItems();
+    return unsentItems.length === 0;
+  };
+
+  const completeOrderAndNavigate = async () => {
+    try {
+      // 1. Mark order as completed
+      if (currentOrder._id) {
+        await axiosWithAuth.put(`/api/orders/${currentOrder._id}/status`, {
+          status: 'completed'
+        });
+        
+        // 2. If it's a dine-in order with a table, release the table
+        if (currentOrder.orderMode === 'Dine-in' && currentOrder.table) {
+          await axiosWithAuth.put(`/api/tables/${currentOrder.table}/status`, {
+            status: 'available'
+          });
+          toast.success('Table released');
+        }
+      }
+      
+      // 3. Clear local storage
+      if (initialTableId) {
+        try {
+          localStorage.removeItem(`table_order_${initialTableId}`);
+        } catch (error) {
+          console.error("Error clearing localStorage:", error);
+        }
+      }
+      
+      // 4. Navigate to tableview page
+      if (typeof window !== 'undefined') {
+        window.location.href = '/dashboard/orders/tableview';
+      }
+      
+    } catch (error) {
+      console.error('Error completing order:', error);
+      toast.error(`Error: ${error.message || 'Failed to complete order'}`);
+    }
+  };
+  
+  
   // Helper function to get subcategory ID from a dish
   const getSubCategoryId = (dish) => {
     // If there's no subCategory at all, return null
@@ -371,19 +421,16 @@ const SalesRegister = ({
       return;
     }
     
+    // Check if all items have KOTs
+    if (!checkAllItemsHaveKOT()) {
+      toast.error('Some items have not been sent to the kitchen. Please create KOT for all items first.');
+      return;
+    }
+    
     setSavingOrder(true);
     try {
       // If we have an existing order, update it
       if (currentOrder._id) {
-        // First ensure all items have been sent to the kitchen
-        const unsentItems = getUnsentItems();
-        if (unsentItems.length > 0) {
-          // Ask if user wants to send remaining items to kitchen
-          if (window.confirm('There are unsent items. Send them to kitchen first?')) {
-            await handleGenerateKOT();
-          }
-        }
-        
         // Create/update the invoice
         const invoiceResponse = await axiosWithAuth.post('/api/orders/invoice', {
           salesOrder: currentOrder._id
@@ -392,22 +439,8 @@ const SalesRegister = ({
         if (invoiceResponse.data.success) {
           toast.success('Invoice saved successfully');
           
-          // Update the order status to 'completed' if all items served
-          if (currentOrder.orderStatus === 'served') {
-            await axiosWithAuth.put(`/api/orders/${currentOrder._id}/status`, {
-              status: 'completed'
-            });
-            
-            // Update local state
-            setCurrentOrder(prev => ({
-              ...prev,
-              orderStatus: 'completed'
-            }));
-          }
-          
-          if (onOrderUpdate) {
-            onOrderUpdate(currentOrder);
-          }
+          // Complete order and navigate to tableview
+          await completeOrderAndNavigate();
         } else {
           toast.error('Failed to save invoice');
         }
@@ -443,16 +476,8 @@ const SalesRegister = ({
             // Update current order with saved data
             setCurrentOrder(savedOrder);
             
-            // Update URL with order ID
-            if (typeof window !== 'undefined') {
-              const url = new URL(window.location);
-              url.searchParams.set('orderId', savedOrder._id);
-              window.history.replaceState({}, '', url);
-            }
-            
-            if (onOrderUpdate) {
-              onOrderUpdate(savedOrder);
-            }
+            // Complete order and navigate to tableview
+            await completeOrderAndNavigate();
           } else {
             toast.warning('Order saved but invoice creation failed');
           }
@@ -467,7 +492,6 @@ const SalesRegister = ({
       setSavingOrder(false);
     }
   };
-  
   // Function to print an invoice
   const handlePrintInvoice = async () => {
     if (!currentOrder.itemsSold || currentOrder.itemsSold.length === 0) {
@@ -571,15 +595,94 @@ const SalesRegister = ({
   
   // Function to print and save invoice
   const handlePrintAndSave = async () => {
+    // Check if all items have KOTs
+    if (!checkAllItemsHaveKOT()) {
+      toast.error('Some items have not been sent to the kitchen. Please create KOT for all items first.');
+      return;
+    }
+    
     setSavingOrder(true);
     try {
       // First save the invoice
-      await handleSaveInvoice();
+      let invoiceId;
       
-      // Then print it
-      await handlePrintInvoice();
-      
-      toast.success('Invoice saved and printed successfully');
+      // Check if the order exists and has an ID
+      if (currentOrder._id) {
+        // Check if invoice already exists for this order
+        const invoiceCheckResponse = await axiosWithAuth.get(`/api/orders/invoice?orderId=${currentOrder._id}`);
+        
+        if (invoiceCheckResponse.data.success && invoiceCheckResponse.data.data.length > 0) {
+          // Invoice exists, use it
+          invoiceId = invoiceCheckResponse.data.data[0]._id;
+        } else {
+          // Create a new invoice
+          const invoiceResponse = await axiosWithAuth.post('/api/orders/invoice', {
+            salesOrder: currentOrder._id
+          });
+          
+          if (invoiceResponse.data.success) {
+            invoiceId = invoiceResponse.data.data._id;
+          } else {
+            throw new Error('Failed to create invoice');
+          }
+        }
+        
+        // Open the invoice in a new window for printing
+        if (invoiceId) {
+          window.open(`/print/invoice/${invoiceId}`, '_blank');
+          toast.success('Invoice opened for printing');
+          
+          // Mark the invoice as printed
+          await axiosWithAuth.put(`/api/orders/invoice/${invoiceId}`, {
+            isPrinted: true,
+            printedAt: new Date()
+          });
+          
+          // Complete order and navigate to tableview
+          await completeOrderAndNavigate();
+        }
+      } else {
+        // This is a new order, save it first
+        toast.info('Saving order before printing...');
+        
+        // Save the order
+        const orderResponse = await axiosWithAuth.post('/api/orders', currentOrder);
+        
+        if (orderResponse.data.success) {
+          const savedOrder = orderResponse.data.data;
+          
+          // Create invoice for the new order
+          const invoiceResponse = await axiosWithAuth.post('/api/orders/invoice', {
+            salesOrder: savedOrder._id
+          });
+          
+          if (invoiceResponse.data.success) {
+            invoiceId = invoiceResponse.data.data._id;
+            
+            // Update current order with saved data
+            setCurrentOrder(savedOrder);
+            
+            // Open the invoice in a new window for printing
+            if (invoiceId) {
+              window.open(`/print/invoice/${invoiceId}`, '_blank');
+              toast.success('Invoice opened for printing');
+              
+              // Mark the invoice as printed
+              await axiosWithAuth.put(`/api/orders/invoice/${invoiceId}`, {
+                isPrinted: true,
+                printedAt: new Date()
+              });
+              
+              // Complete order and navigate to tableview
+              await completeOrderAndNavigate();
+            }
+          } else {
+            throw new Error('Failed to create invoice');
+          }
+        } else {
+          throw new Error('Failed to save order');
+        }
+      }
     } catch (error) {
       console.error('Error in print and save:', error);
       toast.error(`Error: ${error.message || 'Failed to print and save'}`);
@@ -1730,64 +1833,30 @@ const SalesRegister = ({
   };
 
   // Execute order reset after confirmation
-  const executeOrderReset = async () => {
-    setOpenConfirmResetDialog(false);
-    
+// Updated executeOrderReset function (after confirming cancel)
+const executeOrderReset = async () => {
+  setOpenConfirmResetDialog(false);
+  
+  try {
     // If this is a dine-in order with a table and an existing order ID,
-    // we should first check if we need to release the table
+    // we should release the table
     if (currentOrder.orderMode === 'Dine-in' && currentOrder.table && currentOrder._id) {
       try {
-        // Check if there are any completed payments
-        const hasCompletedPayment = currentOrder.payment && currentOrder.payment.some(p => p.amount > 0);
+        // Mark the order as cancelled
+        await axiosWithAuth.put(`/api/orders/${currentOrder._id}/status`, {
+          status: 'cancelled'
+        });
+        toast.success('Order cancelled');
         
-        // If payments were made, release the table
-        if (hasCompletedPayment) {
-          await axiosWithAuth.put(`/api/tables/${currentOrder.table}/status`, {
-            status: 'available'
-          });
-          console.log(`Table ${currentOrder.table} released after reset`);
-        }
+        // Release the table
+        await axiosWithAuth.put(`/api/tables/${currentOrder.table}/status`, {
+          status: 'available'
+        });
+        console.log(`Table ${currentOrder.table} released after cancellation`);
       } catch (error) {
-        console.error('Error releasing table during reset:', error);
+        console.error('Error releasing table during cancel:', error);
       }
     }
-    
-    // Reset the form
-    setCurrentOrder({
-      orderMode: orderMode,
-      customer: {
-        name: '',
-        phone: '',
-        email: '',
-        address: '',
-      },
-      numOfPeople: 1,
-      table: initialTableId || (orderMode === 'Dine-in' ? currentOrder.table : ''),
-      itemsSold: [],
-      taxDetails: [
-        { taxName: 'GST 5%', taxRate: 5, taxAmount: 0 },
-        { taxName: 'Service Tax', taxRate: 2.5, taxAmount: 0 }
-      ],
-      discount: {
-        discountType: 'percentage',
-        discountPercentage: 0,
-        discountValue: 0,
-        discountReason: '',
-      },
-      deliveryCharge: orderMode.includes('Delivery') ? 40 : 0,
-      packagingCharge: orderMode.includes('Takeaway') || orderMode.includes('Delivery') ? 20 : 0,
-      payment: [
-        { method: 'Cash', amount: 0 }
-      ],
-      orderStatus: 'pending',
-      subtotalAmount: 0,
-      totalTaxAmount: 0,
-      totalAmount: 0,
-      menu: selectedMenu
-    });
-    
-    // Reset KOT tracking
-    setKotSentItems({});
     
     // Clear from localStorage if we have a tableId
     if (initialTableId) {
@@ -1803,15 +1872,16 @@ const SalesRegister = ({
       onOrderUpdate(null);
     }
     
-    // Remove order ID from URL
+    // Navigate to tableview page
     if (typeof window !== 'undefined') {
-      const url = new URL(window.location);
-      url.searchParams.delete('orderId');
-      window.history.replaceState({}, '', url);
+      window.location.href = '/dashboard/orders/tableview';
     }
     
-    toast.success('Order has been reset');
-  };
+  } catch (error) {
+    console.error('Error cancelling order:', error);
+    toast.error(`Error: ${error.message || 'Failed to cancel order'}`);
+  }
+};
 
   // Debug info for development - remove in production
   console.log('SalesRegister Render Status:', {
